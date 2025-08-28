@@ -28,7 +28,7 @@ class Assoc(Enum):
     prefix = auto()
     postfix = auto()
     none = auto()
-    # group = auto()
+    group = auto()
 
 
 @dataclass_transform()
@@ -158,29 +158,30 @@ optable: list[list[tuple[OperatorLiteral, Assoc]]] = [
     [("*", Assoc.left), ("/", Assoc.left)],
     [("+", Assoc.left), ("-", Assoc.left)],
     [(';', Assoc.postfix)],
-    # [('(', Assoc.group), (')', Assoc.group), ('{', Assoc.group), ('}', Assoc.group), ('[', Assoc.group), (']', Assoc.group)]
+    [('(', Assoc.group), (')', Assoc.group), ('{', Assoc.group), ('}', Assoc.group), ('[', Assoc.group), (']', Assoc.group)]
 ]
 
 BASE_BIND_POWER = 1   #TBD, but 0 probably for groups ()
+NO_BIND = -1
 def left_bp(i: int) -> tuple[int, int]: 
     return (BASE_BIND_POWER+2*i, BASE_BIND_POWER+2*i+1)
 def right_bp(i: int) -> tuple[int, int]: 
     return (BASE_BIND_POWER+2*i+1, BASE_BIND_POWER+2*i)
 def prefix_bp(i: int) -> tuple[int, int]: 
-    return (BASE_BIND_POWER+2*i, -1)
+    return (BASE_BIND_POWER+2*i, NO_BIND)
 def postfix_bp(i: int) -> tuple[int, int]: 
-    return (-1, BASE_BIND_POWER+2*i)
-# def group_bp(i: int) -> tuple[int, int]: 
-#     return (-1, -1)
+    return (NO_BIND, BASE_BIND_POWER+2*i)
+def group_bp(i: int) -> tuple[int, int]: 
+    return (NO_BIND, NO_BIND)
 def none_bp(i: int) -> tuple[int, int]: 
-    return (-1, -1)
+    return (NO_BIND, NO_BIND)
 
 bp_funcs: dict[Assoc, Callable[[int], tuple[int, int]]] = {
     Assoc.left: left_bp,
     Assoc.right: right_bp,
     Assoc.prefix: prefix_bp,
     Assoc.postfix: postfix_bp,
-    # Assoc.group: group_bp,
+    Assoc.group: group_bp,
     Assoc.none: none_bp,
 }
 
@@ -237,20 +238,26 @@ def shunt_tokens(tokens: list[Token]) -> list[AST]:
         if isinstance(t, NumberT):
             tokens[i] = Atom(t.value)
     
-    while any(isinstance(t, OperatorT) for t in tokens):
-        # pdb.set_trace()
-        op_indices = np.array([i for i, t in enumerate(tokens) if isinstance(t, OperatorT)])
-        bind_pows = np.array([0] + [i for t in tokens if isinstance(t, OperatorT) for i in bindpow[t.value]] + [0])
+    # TODO: probably just redo this as imperative loop (i.e. remove vectorization)
+    while True: #any(isinstance(t, OperatorT) for t in tokens):
+        op_indices = np.array([i for i, t in enumerate(tokens) if isinstance(t, (OperatorT, GroupT))])
+        left_pad = [] if isinstance(tokens[0], (OperatorT, GroupT)) else [NO_BIND, NO_BIND]
+        right_pad = [] if isinstance(tokens[len(tokens)-1], (OperatorT, GroupT)) else [NO_BIND, NO_BIND]
+        bind_pows = np.array(left_pad + [i for t in tokens if isinstance(t, (OperatorT, GroupT)) for i in bindpow[t.value]] + right_pad)[1:-1]
         bind_pows = bind_pows.reshape(len(bind_pows)//2, 2)
-        shunt_dir = (bind_pows[:,0] > bind_pows[:,1]).astype(int)
+        pdb.set_trace()
+        shunt_dir = np.sign(np.diff(bind_pows))[..., 0]
+        # shunt_dir = (bind_pows[:,0] > bind_pows[:,1]).astype(int)
 
         # anywhere there is a false followed by a true
         group_indices = np.where(np.diff(shunt_dir) == 1)[0] + 1
 
-        # apply groups
+        # apply reductions (reverse order so the indices don't get messed up)
         for i in reversed(group_indices):
             op_idx = op_indices[i-1]  # -1 because atom, not operator on left or right side of expr. TODO: better handling of this
             tokens[op_idx-1:op_idx+2] = [BinOp(*tokens[op_idx-1:op_idx+2])]
+        
+        pdb.set_trace()
      
     if not all(isinstance(t, AST) for t in tokens):
         raise ValueError(f"token shunting failed. {tokens=}")
@@ -270,7 +277,7 @@ if __name__ == "__main__":
     if DEBUG: print(bindpow)
 
     from easyrepl import REPL
-    for s in REPL():
+    for s in REPL(history_file='.chat'):
         tokens = tokenize(s)
         exprs = parse(tokens)
         for e in exprs:
