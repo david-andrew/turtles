@@ -234,6 +234,9 @@ class Group(AST):
     def eval(self):
         return self.item.eval()
 
+class EmptyGroup(AST):
+    def __repr__(self): return '()'
+    def eval(self): return ()
 
 @dataclass
 class BinOp(AST):
@@ -271,6 +274,9 @@ class PostfixOp(AST):
 
 def reduce_ops(tokens: list[Token|AST]) -> int:
     ast_idxs = [i for i, t in enumerate(tokens) if isinstance(t, AST)]
+    if len(ast_idxs) == 0:
+        return 0
+
     # for every AST, get the right_bp of the left thing, and the left_bp of the right thing
     adjacent_bps = []
     for idx in ast_idxs:
@@ -358,6 +364,12 @@ def make_groups(tokens: list[Token|AST]) -> int:
             continue
 
         # left and rigth match, and interior fully match!
+        # TODO: need to actually select the group type based on the left/right tokens
+        # (..)|[..]|[..)|(..]: range (i.e. delims with a single bare range AST inside)
+        # (): Group
+        # []: list
+        # {}: scope
+        # <>: typeparams
         if right_idx - left_idx > 2:
             reductions_applied += 1
             tokens[left_idx:right_idx+1] = [SeqGroup(tokens[left_idx+1:right_idx])]
@@ -366,8 +378,12 @@ def make_groups(tokens: list[Token|AST]) -> int:
             reductions_applied += 1
             tokens[left_idx:right_idx+1] = [Group(tokens[left_idx+1])]
             i -= 2
+        elif right_idx - left_idx == 1:
+            reductions_applied += 1
+            tokens[left_idx:right_idx+1] = [EmptyGroup()]
+            i -= 2
         else:
-            raise ValueError(f"left and right group index don't have any interior ASTs. {tokens[left_idx:right_idx+1]=}")
+            raise ValueError(f"left and right group index don't make sense... {tokens[left_idx:right_idx+1]=}")
 
     return reductions_applied
 
