@@ -1,0 +1,8 @@
+# easyrepl files
+.chat
+
+# nix/etc. environment stuff
+.envrc
+.direnv
+shell.nix
+python-packages.nix
