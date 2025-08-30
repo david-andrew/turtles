@@ -1,13 +1,15 @@
 """
 TBD problems to solve
-- finish handling grouping
-- dealing with <> group vs shift operators (tokenization hack, add context stack of how many <> groups are open, no shift operators allowed when non-zero)
-- if-else-if with proper handling of dangling else, etc.
+[x] finish handling grouping
+[ ] support juxtapose
+[ ] consider adding units + unit math!
+[ ] dealing with <> group vs shift operators (tokenization hack, add context stack of how many <> groups are open, no shift operators allowed when non-zero)
+[ ] if-else-if with proper handling of dangling else, etc.
     - similar to handling groups, if-else-if might be handled as a post step?
     - I'm realizing that after post steps, we need to go back to the reduction step b/c e.g. `(1+2)*3` when 1+2 is reduced, we would go to the grouping step, and then after the group is made, can we combine it with the 3
-- ambiguous precedence (e.g. `cos(x)^2` vs `a(x)^2`)
-- opchains (should be pretty straightforward with preprocessing pass)
-- eating interpolated strings. may have to introduce the idea of a context/state stack (which dictates the eat functions available)
+[ ] ambiguous precedence (e.g. `cos(x)^2` vs `a(x)^2`)
+[ ] opchains (should be pretty straightforward with preprocessing pass)
+[ ] eating interpolated strings. may have to introduce the idea of a context/state stack (which dictates the eat functions available)
     - e.g. quotes open the string context. inside of which braces can open a normal context, etc.
 """
 
