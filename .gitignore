@@ -6,3 +6,7 @@
 .direnv
 shell.nix
 python-packages.nix
+
+
+#python stuff
+__pycache__
