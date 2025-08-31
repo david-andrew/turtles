@@ -231,6 +231,65 @@ if __name__ == '__main__':
         print(sppf_tree_str(sppf, G, inp))
 
 
+
+    # Tuple/list
+    Tuple = NonTerminal('Tuple')
+    As = NonTerminal('As')
+    More = NonTerminal('More')
+    G = Grammar()
+    G.add_rule(Tuple, Sentence((Terminal('('), As, Terminal(')'))))
+    G.add_rule(As, Sentence((Terminal('a'), More)))
+    G.add_rule(As, Sentence())
+    G.add_rule(More, Sentence((Terminal(','), Terminal('a'), More)))
+    G.add_rule(More, Sentence())
+
+    parse = complete_parser_for(G, Tuple)
+    for inp in ['()', '(a)', '(a,a)', '(,a)', '(a,)', '']:
+        Y = parse(inp)
+        print(inp if inp else "<ε>", parse_str(find_roots(Tuple, Y, len(inp))))
+        check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
+
+
+    # Custom:
+    # S ::= 'a' | 'b' B S S | ε
+    # B ::= ε
+    S = NonTerminal('S')
+    B = NonTerminal('B')
+    G = Grammar()
+    G.add_rule(S, Sentence((Terminal('a'),)))
+    G.add_rule(S, Sentence((Terminal('b'), B, S, S)))
+    G.add_rule(S, Sentence())
+    G.add_rule(B, Sentence())
+
+    parse = complete_parser_for(G, S)
+    for inp in ['', 'a', 'bb', 'bbb', 'ba', 'bba']:
+        Y = parse(inp)
+        print(inp if inp else "<ε>", parse_str(find_roots(S, Y, len(inp))))
+        check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
+
+
+
+    # E ::= E + E | E * E | ( E ) | '1'
+    E = NonTerminal('E'); G = Grammar()
+    G.add_rule(E, Sentence((E, Terminal('+'), E)))
+    G.add_rule(E, Sentence((E, Terminal('*'), E)))
+    G.add_rule(E, Sentence((Terminal('('), E, Terminal(')'))))
+    G.add_rule(E, Sentence((Terminal('1'),)))
+
+    parse = complete_parser_for(G, E)
+    for inp in ['1', '1+1', '1*1+1', '(1)', '(1+1)*1']:
+        Y = parse(inp)
+        print(inp, parse_str(find_roots(E, Y, len(inp))))
+        check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
+
+
+
     exit(1)
 
 
