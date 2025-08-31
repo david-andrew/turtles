@@ -65,10 +65,11 @@ def process(Gamma:Grammar, tau:str, d:Descriptor, G:set[tuple[Commencement,Conti
 
 def process_eps(d:Descriptor, G:set[tuple[Commencement, Continuation]], P:set[tuple[Commencement, int]]) -> tuple[tuple[list[Descriptor], set[BSR]], set[tuple[Commencement, Continuation]], set[tuple[Commencement, int]]]:
     g, l, k = d
-    K:set[Continuation] = {c for (_,c) in G}
-    W, Y = ascend(l, K, k)
-    Yp = {(g, l, l, l)}
-    return (W, Y|Yp), set(), {((g.X, l), k)}
+    key = (g.X, l)
+    K: set[Continuation] = {c for (cm, c) in G if cm == key}
+    W, Y = ascend(k, K, k)                  # see bug #2 below
+    Yp = {(g, l, l, l)} if len(g.rule) == 0 else set()
+    return (W, Y | Yp), set(), {((g.X, l), k)}
 
 
 def process_sym(Gamma:Grammar, tau:str, d:Descriptor, G:set[tuple[Commencement,Continuation]], P:set[tuple[Commencement, int]]) -> tuple[tuple[list[Descriptor], set[BSR]], set[tuple[Commencement, Continuation]], set[tuple[Commencement, int]]]:
@@ -137,9 +138,90 @@ def parse_str(Y:set[BSR]):
     return '{\n' + ''.join(s) + '}'
 
 
+# for debugging
+def check_invariants(Y, n):
+    ok = True
+    for g,l,k,r in Y:
+        if not (0 <= l <= k <= r <= n):
+            print("BAD:", (g,l,k,r))
+            ok = False
+    if ok:
+        print("Invariants OK.")
+
+
+
+
 
 
 if __name__ == '__main__':
+
+    # trivial literal
+    S = NonTerminal('S'); G = Grammar()
+    G.add_rule(S, Sentence((Terminal('h'), Terminal('i'))))
+    parse = complete_parser_for(G, S)
+    inp = 'hi'; Y = parse(inp)
+    print('roots:', parse_str(find_roots(S, Y, len(inp))))
+    check_invariants(Y, len(inp))
+
+
+    # pure epsilon
+    S = NonTerminal('S'); G = Grammar()
+    G.add_rule(S, Sentence())   # epsilon
+    parse = complete_parser_for(G, S)
+    for inp in ['', 'x']:
+        Y = parse(inp)
+        print(inp, parse_str(find_roots(S, Y, len(inp))))
+        check_invariants(Y, len(inp))
+
+
+    # left recursion, nullable
+    E = NonTerminal('E'); G = Grammar()
+    G.add_rule(E, Sentence((E, E, E)))
+    G.add_rule(E, Sentence((Terminal('1'),)))
+    G.add_rule(E, Sentence())
+    parse = complete_parser_for(G, E)
+    for inp in ['', '1']:
+        Y = parse(inp)
+        print(inp, parse_str(find_roots(E, Y, len(inp))))
+        check_invariants(Y, len(inp))
+
+
+    # Balanced parens with ε
+    P = NonTerminal('P'); G = Grammar()
+    G.add_rule(P, Sentence((Terminal('('), P, Terminal(')'), P)))
+    G.add_rule(P, Sentence())
+    parse = complete_parser_for(G, P)
+    for inp in ['', '()', '()()', ')(']:
+        Y = parse(inp)
+        print(inp, parse_str(find_roots(P, Y, len(inp))))
+        check_invariants(Y, len(inp))
+
+
+    # Simple repetition (Kleene-like, nullable)
+    A = NonTerminal('A'); G = Grammar()
+    G.add_rule(A, Sentence((Terminal('a'), A)))
+    G.add_rule(A, Sentence())
+    parse = complete_parser_for(G, A)
+    for inp in ['', 'a', 'aaa', 'b']:
+        Y = parse(inp)
+        print(inp, parse_str(find_roots(A, Y, len(inp))))
+        check_invariants(Y, len(inp))
+
+
+    # Small local ambiguity
+    S = NonTerminal('S'); G = Grammar()
+    G.add_rule(S, Sentence((Terminal('a'),)))
+    G.add_rule(S, Sentence((Terminal('a'), Terminal('a'))))
+    parse = complete_parser_for(G, S)
+    for inp in ['a', 'aa']:
+        Y = parse(inp)
+        print(inp, parse_str(find_roots(S, Y, len(inp))))
+        check_invariants(Y, len(inp))
+
+
+    exit(1)
+
+
 
     # # super simple test grammar S ::= 'h' 'e' 'l' 'l' 'o'
     # S = NonTerminal('S')
