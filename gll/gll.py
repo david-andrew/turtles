@@ -3,7 +3,7 @@ TBD implementation of GLL parser
 should be the go-to approach for general regex/parsing needs
 """
 from grammar import NonTerminal, Terminal, Sentence, Slot, Grammar
-from trees import BSR, bsr_tree_str, find_roots, extractSPPF, sppf_tree_str
+from trees import BSR, find_roots, extractSPPF, sppf_tree_str
 
 
 # def dedup(l:list) -> list:
@@ -162,6 +162,8 @@ if __name__ == '__main__':
     inp = 'hi'; Y = parse(inp)
     print('roots:', parse_str(find_roots(S, Y, len(inp))))
     check_invariants(Y, len(inp))
+    sppf = extractSPPF(Y, G)
+    print(sppf_tree_str(sppf, G, inp))
 
 
     # pure epsilon
@@ -172,6 +174,8 @@ if __name__ == '__main__':
         Y = parse(inp)
         print(inp, parse_str(find_roots(S, Y, len(inp))))
         check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
 
 
     # left recursion, nullable
@@ -184,6 +188,8 @@ if __name__ == '__main__':
         Y = parse(inp)
         print(inp, parse_str(find_roots(E, Y, len(inp))))
         check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
 
 
     # Balanced parens with ε
@@ -195,6 +201,8 @@ if __name__ == '__main__':
         Y = parse(inp)
         print(inp, parse_str(find_roots(P, Y, len(inp))))
         check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
 
 
     # Simple repetition (Kleene-like, nullable)
@@ -206,6 +214,8 @@ if __name__ == '__main__':
         Y = parse(inp)
         print(inp, parse_str(find_roots(A, Y, len(inp))))
         check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
 
 
     # Small local ambiguity
@@ -217,6 +227,8 @@ if __name__ == '__main__':
         Y = parse(inp)
         print(inp, parse_str(find_roots(S, Y, len(inp))))
         check_invariants(Y, len(inp))
+        sppf = extractSPPF(Y, G)
+        print(sppf_tree_str(sppf, G, inp))
 
 
     exit(1)
