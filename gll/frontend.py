@@ -18,94 +18,98 @@ class Rule(ABC):
 
 
 ############ Examples proposed by chatgpt #############
-from typing import Annotated, Optional, Union
-from niceparse import (
-    Rule, makeparser,                     # core
-    Char, Range, By, Plus, Star, Repeat,  # scannerless atoms & repetition
-    SepBy, Label,                         # structure & diagnostics
-    Join, AsInt, AsFloat, UnescapeJson, Map  # transforms
+from typing import Annotated
+from easygrammar import (
+    Rule,                               # core
+    Char, Plus, Star, Repeat, Alt, Opt, # Rule structures
+    # TBD future conveniences. see: https://github.com/asweigart/humre/README.md for a good list of candidates
 )
 
 
 
 ################### [Semantic versioning] ###############
-class Int(Rule):
-    # int := '0' | NZDigit Digit*
-    i: Annotated[int,
-        ("0" | (Char['1-9'], Star[Char['0-9']])),
-        Join, AsInt
+class UInt(Rule):
+    # uint := '0' | NZDigit Digit*
+    i: Annotated[
+        int,
+        Char["0"] | (Char['1-9'], Star[Char['0-9']]),
     ]
     def __str__(self) -> str: return str(self.i)
 
 class Id(Rule):
-    # id := (letters|'-')+ | Int   (spec allows leading zeros only for non-int)
-    id: Annotated[Union[str, Int],
-        (Plus[Char['a-zA-Z0-9-']], Join) | Int
+    # id := (letters|'-')+ | UInt   (spec allows leading zeros only for non-int)
+    id: Annotated[
+        str | UInt,
+        Plus[Char['a-zA-Z0-9-']] | UInt
     ]
     def __str__(self) -> str: return str(self.id)
 
 class Prerelease(Rule):
     "-"
-    ids: Annotated[list[Id], SepBy(Id, by=By["."])]
+    ids: Annotated[list[Id], (Id, Star['.', Id])]
     def __str__(self) -> str: return "-" + ".".join(map(str, self.ids))
 
 class Build(Rule):
     "+"
-    ids: Annotated[list[Id], SepBy(Id, by=By["."])]
+    ids: Annotated[list[Id], (Id, Star[".", Id])]
     def __str__(self) -> str: return "+" + ".".join(map(str, self.ids))
 
 class SemVer(Rule):
-    major: Annotated[Int,     Label("major")]
+    major: UInt
     "."
-    minor: Annotated[Int,     Label("minor")]
+    minor: UInt
     "."
-    patch: Annotated[Int,     Label("patch")]
-    prerelease: Optional[Prerelease]
-    build: Optional[Build]
+    patch: UInt
+    prerelease: Prerelease|None
+    build: Build|None
 
     def __str__(self) -> str:
         return f"{self.major}.{self.minor}.{self.patch}{self.prerelease or ''}{self.build or ''}"
 
-semver = makeparser(SemVer, ws="manual")  # manual whitespace, like your sketch
 
 # Typed usage:
-t0: SemVer = semver("0.0.0")
-t1: SemVer = semver("1.2.3-alpha.1+build.1")
+t0 = SemVer("0.0.0")
+t1 = SemVer("1.2.3-alpha.1+build.1")
 
 
 
 
 ################### [JSON] ###############
 # Atoms
-Digit   = Char["0-9"]
-NZDigit = Char["1-9"]
-Hex     = Char["0-9a-fA-F"]
+Digit    = Char["0-9"]
+NZDigit  = Char["1-9"]
+HexDigit = Char["0-9a-fA-F"]
 
 class JNull(Rule):
     "null"
 
 class JBool(Rule):
     # capture terminal and map
-    value: Annotated[bool, ("true" | "false"), Map({"true": True, "false": False})]
+    value: Annotated[bool, Alt["true", "false"], {"true": True, "false": False}]
 
 class JNumber(Rule):
     # number := '-'? ('0' | NZDigit Digit*) ('.' Digit+)? ([eE] [+-]? Digit+)?
-    value: Annotated[float,
-        (("-"?,), ("0" | (NZDigit, Star[Digit])), ((".", Digit+)?), ((Char["eE"], Char["+-"]?, Digit+)?) ),
-        Join, AsFloat
+    value: Annotated[
+        float,
+        (Opt["-"], Char["0"]|(NZDigit, Star[Digit]), Opt[(".", Plus[Digit])], Opt[(Char["eE"], Opt[Char["+-"]], Plus[Digit])]),
+        lambda x: float(x)
     ]
 
 class JString(Rule):
     # string := '"' ( unescaped | '\' (simple | 'u' Hex^4) )* '"'
-    value: Annotated[str,
-        ('"', Star[
-            (Char['\x20-\x21\x23-\x5B\x5D-\u10FFFF'] |
-             ('\\', (Char['"\\/bfnrt'] | ('u', Hex, Hex, Hex, Hex))))
-        ], '"'),
-        Join, UnescapeJson
+    value: Annotated[
+        str,
+        (
+            '"', 
+            Star[(
+                Char['\x20-\x21\x23-\x5B\x5D-\u10FFFF'] |
+                ('\\', (Char['"\\/bfnrt'] | ('u', Repeat[HexDigit, 4])))
+            )],
+            '"'
+        ),
+        
     ]
 
-JSONValue = Union[JNull, JBool, JNumber, JString, "JArray", "JObject"]
 
 class Pair(Rule):
     key: JString
@@ -114,18 +118,18 @@ class Pair(Rule):
 
 class JArray(Rule):
     "["
-    items: Annotated[list[JSONValue], SepBy("JSONValue", by=By[","])]
+    items: Annotated[list[JSONValue], (JSONValue, Star[",", JSONValue])]
     "]"
 
 class JObject(Rule):
     "{"
-    pairs: Annotated[list[Pair], SepBy(Pair, by=By[","])]
+    pairs: Annotated[list[Pair], (Pair, Star[",", Pair])]
     "}"
 
-json = makeparser(JSONValue, ws="token")  # skip whitespace between tokens
+JSONValue = JNull | JBool | JNumber | JString | JArray | JObject
 
 doc = '{"ok": true, "nums":[1,2,3.5], "nested": {"a": null, "b": "hi"}}'
-ast: JSONValue = json(doc)
+ast: JSONValue = JSONValue(doc)
 
 
 
@@ -136,39 +140,38 @@ ast: JSONValue = json(doc)
 # F -> '(' E ')' | Number
 
 class Number(Rule):
-    value: Annotated[float, Plus[Digit], Join, AsFloat]
+    value: Annotated[float, Plus[Digit], lambda x: float(x)]
 
-Expr = Union["Add", "Sub", "Mul", "Div", Number]
+# Expr = Alt["Add", "Sub", "Mul", "Div", Number]
 
 class Add(Rule):
-    left: "Expr"
+    left: Expr
     "+"
-    right: "Expr"  # classic left recursion; GLL handles it
+    right: Expr
 
 class Sub(Rule):
-    left: "Expr"
+    left: Expr
     "-"
-    right: "Expr"
+    right: Expr
 
 class Mul(Rule):
-    left: "Expr"
+    left: Expr
     "*"
-    right: "Expr"
+    right: Expr
 
 class Div(Rule):
-    left: "Expr"
+    left: Expr
     "/"
-    right: "Expr"
+    right: Expr
 
 class Parens(Rule):
     "("
-    inner: "Expr"
+    inner: Expr
     ")"
 
-Expr = Union[Add, Sub, Mul, Div, Parens, Number]
-expr = makeparser(Expr, ws="token")
+Expr = Alt[Add, Sub, Mul, Div, Parens, Number]
 
-tree: Expr = expr("1 + 2 * (3 + 4) - 5")
+ast = Expr("1 + 2 * (3 + 4) - 5")
 
 
 
