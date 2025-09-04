@@ -1,0 +1,109 @@
+from typing import dataclass_transform
+from abc import ABC, ABCMeta
+import inspect
+import ast
+
+class RuleMeta(ABCMeta):
+    def __or__(cls: 'type[Rule]', other: 'type[Rule]|str|tuple') -> 'type[Rule]':
+        # this runs on ClassA | ClassB
+        # TODO: Rule1 | Rule2 should generate a new Rule
+        if isinstance(other, str):
+            return f"Custom OR on classes: {cls.__name__} | {repr(other)}"
+        if isinstance(other, tuple):
+            return f"Custom OR on classes: {cls.__name__} | {repr(other)}"
+        return f"Custom OR on classes: {cls.__name__} | {other.__name__}"
+
+
+@dataclass_transform()
+class Rule(ABC, metaclass=RuleMeta):
+    """initialize a token subclass as a dataclass"""
+    @staticmethod
+    def _collect_sequence_for_class(target_cls: type) -> list:
+        """Return ordered (expr/decl) tuples found in the class body of target_cls."""
+        try:
+            source_file = inspect.getsourcefile(target_cls) or inspect.getfile(target_cls)
+            if not source_file:
+                return []
+            with open(source_file, "r") as fh:
+                file_source = fh.read()
+
+            module_ast = ast.parse(file_source)
+            _, class_start_lineno = inspect.getsourcelines(target_cls)
+
+            target_class_node = None
+            for node in ast.walk(module_ast):
+                if isinstance(node, ast.ClassDef) and node.name == target_cls.__name__ and node.lineno == class_start_lineno:
+                    target_class_node = node
+                    break
+
+            if target_class_node is None:
+                # fallback: first class with matching name
+                for node in ast.walk(module_ast):
+                    if isinstance(node, ast.ClassDef) and node.name == target_cls.__name__:
+                        target_class_node = node
+                        break
+
+            if target_class_node is None:
+                return []
+
+            sequence = []
+            for stmt in target_class_node.body:
+                # capture bare string expressions (including the leading docstring if used that way)
+                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                    sequence.append(("expr", stmt.value.value))
+                    continue
+
+                # capture variable annotations: a:int, b:str, etc.
+                if isinstance(stmt, ast.AnnAssign):
+                    var_name = None
+                    if isinstance(stmt.target, ast.Name):
+                        var_name = stmt.target.id
+                    # best-effort to reconstruct the annotation text
+                    annotation_text = ast.get_source_segment(file_source, stmt.annotation)
+                    if annotation_text is None:
+                        try:
+                            annotation_text = ast.unparse(stmt.annotation)  # py>=3.9
+                        except Exception:
+                            annotation_text = None
+                    sequence.append(("decl", var_name, annotation_text))
+                    continue
+
+            return sequence
+        except OSError as e:
+            if str(e) == 'source code not available':
+                # TODO: have a fallback that makes use of metaclass capturing named expressions in the class body
+                raise ValueError(f'Rule subclass `{target_cls.__name__}` must be defined in a file (e.g. cannot create a grammar rule in the REPL). Source code inspection failed: {e}') from e
+            raise e
+
+    def __init_subclass__(cls: 'type[Rule]', **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        # capture the ordered sequence of class-body expressions and declarations
+        sequence = Rule._collect_sequence_for_class(cls)
+        setattr(cls, "_sequence", sequence)
+
+    # def __repr__(self) -> str:
+    #     dict_str = ", ".join([f"{k}=`{v}`" for k, v in self.__dict__.items()])
+    #     return f"{self.__class__.__name__}({dict_str})"
+
+
+
+
+class ClassA(Rule):
+    '('
+    a:int
+    ')'
+
+class ClassB(Rule):
+    ClassA()
+    b:str
+
+
+
+print(ClassA | ClassB)
+print(ClassA | "ClassB")
+print(ClassA | ("ClassB", "ClassC"))
+# -> "Custom OR on classes: ClassA | ClassB"
+
+# Example: demonstrate collected sequences for subclasses
+print("ClassA sequence:", getattr(ClassA, "_sequence", None))
+print("ClassB sequence:", getattr(ClassB, "_sequence", None))
