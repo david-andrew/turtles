@@ -22,7 +22,7 @@ from typing import Annotated
 from easygrammar import (
     Rule,                               # core
     Char, Plus, Star, Repeat, Alt, Opt, # Rule structures
-    # TBD future conveniences. see: https://github.com/asweigart/humre/README.md for a good list of candidates
+    # TBD future conveniences. see: https://github.com/asweigart/humre/blob/main/README.md for a good list of candidates
 )
 
 

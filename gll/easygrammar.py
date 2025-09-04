@@ -8,10 +8,15 @@ class RuleMeta(ABCMeta):
         # this runs on ClassA | ClassB
         # TODO: Rule1 | Rule2 should generate a new Rule
         if isinstance(other, str):
-            return f"Custom OR on classes: {cls.__name__} | {repr(other)}"
+            print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
+            return cls
         if isinstance(other, tuple):
-            return f"Custom OR on classes: {cls.__name__} | {repr(other)}"
-        return f"Custom OR on classes: {cls.__name__} | {other.__name__}"
+            print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
+            return cls
+        print(f"Custom OR on classes: {cls.__name__} | {other.__name__}")
+        return cls
+    def __ror__(cls: 'type[Rule]', other: 'type[Rule]|str|tuple') -> 'type[Rule]':
+        return cls | other
 
 
 @dataclass_transform()
@@ -23,7 +28,7 @@ class Rule(ABC, metaclass=RuleMeta):
         try:
             source_file = inspect.getsourcefile(target_cls) or inspect.getfile(target_cls)
             if not source_file:
-                return []
+                raise ValueError(f'Rule subclass `{target_cls.__name__}` must be defined in a file (e.g. cannot create a grammar rule in the REPL). Source code inspection failed: {e}') from e
             with open(source_file, "r") as fh:
                 file_source = fh.read()
 
@@ -97,10 +102,11 @@ class ClassB(Rule):
     ClassA()
     b:str
 
-
+class t(Rule): ...
 
 print(ClassA | ClassB)
 print(ClassA | "ClassB")
+print(t| 'ajhdgajhdgjag' | 'b' | ClassB)
 print(ClassA | ("ClassB", "ClassC"))
 # -> "Custom OR on classes: ClassA | ClassB"
 
