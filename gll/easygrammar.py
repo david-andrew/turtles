@@ -1,7 +1,9 @@
-from typing import dataclass_transform, Self, final
-from abc import ABC, ABCMeta
+from typing import dataclass_transform, Self, final, overload
+from abc import ABC, ABCMeta, abstractmethod
 import inspect
 import ast
+
+import pdb
 
 class RuleMeta(ABCMeta):
     def __or__(cls: 'type[Rule]', other: 'type[Rule]|str|tuple') -> 'type[Rule]':
@@ -17,7 +19,7 @@ class RuleMeta(ABCMeta):
         return cls
     def __ror__(cls: 'type[Rule]', other: 'type[Rule]|str|tuple') -> 'type[Rule]':
         return cls | other
-    
+
 
     def __call__(cls, raw: str, /) -> Self:
         # TODO: whole process of parsing the input string
@@ -26,11 +28,11 @@ class RuleMeta(ABCMeta):
 
         # create an instance of the class (without calling __init__)
         obj = cls.__new__(cls, cls.__name__)
-        
+
         # define all of the members of the instance (based on the parse shape). e.g.
         obj.a = 42  #DEBUG
         obj.b = 43  #DEBUG
-        
+
         return obj
 
 
@@ -122,6 +124,36 @@ class Rule(ABC, metaclass=RuleMeta):
 #     def __init__(self, raw:str): ...
 
 
+
+# class RuleFactoryMeta(ABCMeta): ...
+class RuleFactory(ABC):#, metaclass=RuleFactoryMeta): ...
+    @abstractmethod
+    def __new__(cls, *args, **kwargs) -> type[Rule]
+
+class Repeat(RuleFactory):
+    @overload
+    def __new__(cls, *, exactly:int) -> type[Rule]: ...
+    @overload
+    def __new__(cls, *, at_least:int|None=None, at_most:int|None=None) -> type[Rule]: ...
+    def __new__(cls, *, at_least:int|None=None, at_most:int|None=None, exactly:int|None=None) -> type[Rule]:
+        if exactly is not None:
+            if at_least is not None:
+                raise ValueError('`exactly` and `at_least` are mutually exclusive.')
+            if at_most is not None:
+                raise ValueError('`exactly` and `at_most` are mutually exclusive.')
+            at_least=exactly
+            at_most=exactly
+        else:
+            if at_least is None:
+                at_least=0
+            if at_most is None:
+                at_most=float('inf')
+
+        pdb.set_trace()
+
+        return Rule
+
+Repeat()
 
 class ClassA(Rule):
     '('
