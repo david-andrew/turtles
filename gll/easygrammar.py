@@ -1,4 +1,5 @@
-from typing import Self, final, Protocol, Any, Union, overload
+from types import NotImplementedType
+from typing import Self, final, Protocol, Any, Union, overload, Annotated as Coerce
 from abc import ABC, ABCMeta, abstractmethod
 import inspect
 import ast
@@ -6,6 +7,7 @@ import ast
 import pdb
 
 class RuleMeta(ABCMeta):
+    # TODO: something about the typing here prevents Rule|None from working, and it just becomes Any
     def __or__(cls: 'type[Rule]', other: 'type[Rule]|str|tuple') -> 'type[Rule]':
         # this runs on ClassA | ClassB
         # TODO: Rule1 | Rule2 should generate a new Rule
@@ -15,6 +17,10 @@ class RuleMeta(ABCMeta):
         if isinstance(other, tuple):
             print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
             return cls
+        if other is None:
+            return NotImplemented
+            # print(f"Custom OR on classes: {cls.__name__} | None")
+            # return cls
         print(f"Custom OR on classes: {cls.__name__} | {other.__name__}")
         return cls
     def __ror__(cls: 'type[Rule]', other: 'type[Rule]|str|tuple') -> 'type[Rule]':

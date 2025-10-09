@@ -1,4 +1,5 @@
-from easygrammar import Rule, Annotated, repeat, char, either, optional, sequence
+from easygrammar import Rule, repeat, char, either, optional, sequence, Repeat, Char, Either, Optional, Sequence, Coerce
+# from typing import Annotated
 
 
 
@@ -147,27 +148,35 @@ class SemVer(Rule):
 
 class Prerelease(Rule):
     "-"
-    ids: Annotated[list[Id], repeat(Id, separator='.', at_least=1)]
+    ids: Coerce[list[Id], repeat(Id, separator='.', at_least=1)]  #Note: annotating here coerces the type from Repeat[Id] to list[Id]. will need to handle Annotated/Coercion
     def __str__(self): return f"-{'.'.join(map(str, self.ids))}"
 
 class Build(Rule):
     "+"
-    ids: Annotated[list[Id], repeat(Id, separator='.', at_least=1)]
+    ids: Coerce[list[Id], repeat(Id, separator='.', at_least=1)]
     def __str__(self): return f"+{'.'.join(map(str, self.ids))}"
 
 class NumId(Rule):
-    id: Annotated[str, either('0', (char('1-9'), repeat(char('0-9'))))]
+    id: Coerce[str, either('0', (char('1-9'), repeat(char('0-9'))))]
     def __str__(self): return str(self.id)
 
 class Id(Rule):
-    id: Annotated[str, repeat(char('a-zA-Z0-9-'), at_least=1)]
+    id: Coerce[str, repeat(char('a-zA-Z0-9-'), at_least=1)]
     def __str__(self): return str(self.id)
 
+# apple = Build('+1.2.3').ids
+apple = SemVer('1.2.3').prerelease
 
+...
 
-
-
-
+from dataclasses import dataclass
+@dataclass
+class A:
+    'a'
+    a: int|None
+    'b'
+a = A()
+a.a
 
 """
 Notes:
