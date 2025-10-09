@@ -4,41 +4,41 @@ from easygrammar import Rule, Annotated, repeat, char, either, optional, sequenc
 
 ######################  [Misc]  ######################
 
-class ClassA(Rule):
-    '('
-    a:int
-    ')'
+# class ClassA(Rule):
+#     '('
+#     a:int
+#     ')'
 
 
-class Test(Rule):
-    a: Annotated[int, ('(', ')')]
-    def __init__(self, a:int): ...
-a = Test('()')
-a.a
+# class Test(Rule):
+#     a: Annotated[int, ('(', ')')]
+#     def __init__(self, a:int): ...
+# a = Test('()')
+# a.a
 
-class ClassB(Rule):
-    # ClassA("(5)")
-    b:str
+# class ClassB(Rule):
+#     # ClassA("(5)")
+#     b:str
 
-class ClassC:
-    '('
-    a: int
-    ')'
+# class ClassC:
+#     '('
+#     a: int
+#     ')'
 
-c = ClassB('')
-c.b
+# c = ClassB('')
+# c.b
 
-class t(Rule): ...
+# class t(Rule): ...
 
-print(ClassA | ClassB)
-print(ClassA | "ClassB")
-print(t| 'ajhdgajhdgjag' | 'b' | ClassB)
-print(ClassA | ("ClassB", "ClassC"))
-# -> "Custom OR on classes: ClassA | ClassB"
+# print(ClassA | ClassB)
+# print(ClassA | "ClassB")
+# print(t| 'ajhdgajhdgjag' | 'b' | ClassB)
+# print(ClassA | ("ClassB", "ClassC"))
+# # -> "Custom OR on classes: ClassA | ClassB"
 
-# Example: demonstrate collected sequences for subclasses
-print("ClassA sequence:", getattr(ClassA, "_sequence", None))
-print("ClassB sequence:", getattr(ClassB, "_sequence", None))
+# # Example: demonstrate collected sequences for subclasses
+# print("ClassA sequence:", getattr(ClassA, "_sequence", None))
+# print("ClassB sequence:", getattr(ClassB, "_sequence", None))
 
 
 
@@ -136,30 +136,6 @@ print("ClassB sequence:", getattr(ClassB, "_sequence", None))
 """
 
 
-
-
-Id = {
-    'id': repeat(char('a-zA-Z0-9-'), at_least=1)
-}
-
-class Id(Rule):
-    id: Annotated[str, repeat(char('a-zA-Z0-9-'), at_least=1)]
-    def __str__(self): return str(self.id)
-
-class NumId(Rule):
-    id: Annotated[str, either('0', (char('1-9'), repeat(char('0-9'))))]
-    def __str__(self): return str(self.id)
-
-class Build(Rule):
-    "+"
-    ids: Annotated[list[Id], repeat(Id, separator='.', at_least=1)]
-    def __str__(self): return f"+{'.'.join(map(str, self.ids))}"
-
-class Prerelease(Rule):
-    "-"
-    ids: Annotated[list[Id], repeat(Id, separator='.', at_least=1)]
-    def __str__(self): return f"-{'.'.join(map(str, self.ids))}"
-
 class SemVer(Rule):
     major: NumId
     "."
@@ -168,6 +144,27 @@ class SemVer(Rule):
     patch: NumId
     prerelease: Prerelease|None
     build: Build|None
+
+class Prerelease(Rule):
+    "-"
+    ids: Annotated[list[Id], repeat(Id, separator='.', at_least=1)]
+    def __str__(self): return f"-{'.'.join(map(str, self.ids))}"
+
+class Build(Rule):
+    "+"
+    ids: Annotated[list[Id], repeat(Id, separator='.', at_least=1)]
+    def __str__(self): return f"+{'.'.join(map(str, self.ids))}"
+
+class NumId(Rule):
+    id: Annotated[str, either('0', (char('1-9'), repeat(char('0-9'))))]
+    def __str__(self): return str(self.id)
+
+class Id(Rule):
+    id: Annotated[str, repeat(char('a-zA-Z0-9-'), at_least=1)]
+    def __str__(self): return str(self.id)
+
+
+
 
 
 
