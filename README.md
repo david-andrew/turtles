@@ -1,5 +1,5 @@
 # Turtles
-Parsing made easy in python. Also serves as a more human readable replacement for regex
+Parsing made easy in python. Also serves as a more human readable replacement for regex.
 
 ## Frontend
 Parser grammars are defined analogously to dataclasses, and then the parse result is returned in the same structure.
@@ -15,7 +15,7 @@ class MyParser(Rule):
 result = MyParser('Hello, World!')
 print(result.name)  # 'World'
 
-result = Hello('something else')  # would raise a parse failure
+result = MyParser('something else')  # would raise a parse failure
 ```
 
 todo: explain more...
