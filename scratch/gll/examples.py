@@ -148,25 +148,26 @@ class SemVer(Rule):
 
 class Prerelease(Rule):
     "-"
-    ids: Coerce[list[Id], repeat(Id, separator='.', at_least=1)]  #Note: annotating here coerces the type from Repeat[Id] to list[Id]. will need to handle Annotated/Coercion
+    ids: repeat(Id, separator='.', at_least=1)
     def __str__(self): return f"-{'.'.join(map(str, self.ids))}"
 
 class Build(Rule):
     "+"
-    ids: Coerce[list[Id], repeat(Id, separator='.', at_least=1)]
+    ids: repeat(Id, separator='.', at_least=1)
     def __str__(self): return f"+{'.'.join(map(str, self.ids))}"
 
 class NumId(Rule):
-    id: Coerce[str, either('0', (char('1-9'), repeat(char('0-9'))))]
+    id: either('0', (char('1-9'), repeat(char('0-9'))))
     def __str__(self): return str(self.id)
 
 class Id(Rule):
-    id: Coerce[str, repeat(char('a-zA-Z0-9-'), at_least=1)]
+    id: repeat(char('a-zA-Z0-9-'), at_least=1)
     def __str__(self): return str(self.id)
 
-# apple = Build('+1.2.3').ids
-apple = SemVer('1.2.3').prerelease
+result = SemVer('1.2.3-alpha+3.14')
 
+#TODO: consider allowing specifying post processing steps on rules, e.g. NumId gets converted to str, etc. 
+# Could be a __post_init__ method. though to preserve the type safety stuff, perhaps using Coerce is the best bet.
 ...
 
 from dataclasses import dataclass
