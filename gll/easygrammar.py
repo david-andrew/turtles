@@ -8,7 +8,7 @@ import pdb
 
 class RuleMeta(ABCMeta):
     # TODO: something about the typing here prevents Rule|None from working, and it just becomes Any
-    def __or__(cls: 'RuleMeta', other: 'RuleMeta|str|tuple|None') -> 'RuleMeta':
+    def __or__(cls: RuleMeta, other: RuleMeta|str|tuple|None) -> RuleMeta:
         # this runs on ClassA | ClassB
         # TODO: Rule1 | Rule2 should generate a new Rule
         if isinstance(other, str):
@@ -24,11 +24,10 @@ class RuleMeta(ABCMeta):
             # return cls
         print(f"Custom OR on classes: {cls.__name__} | {other.__name__}")
         return cls
-    def __ror__(cls: 'RuleMeta', other: 'RuleMeta|str|tuple|None') -> 'RuleMeta':
+    def __ror__(cls: RuleMeta, other: RuleMeta|str|tuple|None) -> RuleMeta:
         return cls | other
 
-
-    def __call__(cls, raw: str, /) -> 'Rule':
+    def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
         # TODO: whole process of parsing the input string
         # TODO: would it be possible to pass in a generic sequence (e.g. list[Token]), i.e. easy ability to separate scanner and parser?
         # print(f"Custom call on classes: {cls.__name__} | {raw}")
@@ -193,6 +192,9 @@ class Optional[T:Rule](Rule):
 class Sequence[*Ts](Rule):
     items: tuple[*Ts]
 
+# TBD how this will work
+class _Ambiguous[T:Rule](Rule):
+    alternatives: list[T]
 
 
 def char(s:str) -> type[Char]:
@@ -284,6 +286,9 @@ def test():
         'c'
     class D(Rule):
         'd'
+    a = repeat(A)
+    b = a('aaaa')
+    c = b.items[0]
     r = sequence(A,B,D,D)
     r('').items
     rule1 = either(A, repeat(B, exactly=5, separator='.'), optional(B))
