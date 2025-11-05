@@ -1,4 +1,4 @@
-from types import NotImplementedType, UnionType
+from types import NoneType, NotImplementedType, UnionType
 from typing import Self, final, Protocol, Any, Union, overload, Annotated as Coerce
 from abc import ABC, ABCMeta, abstractmethod
 import inspect
@@ -7,24 +7,41 @@ import ast
 import pdb
 
 class RuleMeta(ABCMeta):
+    @overload
+    def __or__[T:Rule](cls: type[T], other:type[None]) -> type[Optional[T]]: ...
+    @overload
+    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> type[Either[T|U]]: ...
+    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|type[None]) -> type[Either[T|U]]|type[Optional[T]]: ...
+
     # TODO: something about the typing here prevents Rule|None from working, and it just becomes Any
-    def __or__(cls: RuleMeta, other: RuleMeta|str|tuple|None) -> RuleMeta:
-        # this runs on ClassA | ClassB
-        # TODO: Rule1 | Rule2 should generate a new Rule
-        if isinstance(other, str):
-            print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
-            return cls
-        if isinstance(other, tuple):
-            print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
-            return cls
-        if other is None:
-            return type.__or__(cls, other)
-            # return NotImplemented
-            # print(f"Custom OR on classes: {cls.__name__} | None")
-            # return cls
-        print(f"Custom OR on classes: {cls.__name__} | {other.__name__}")
-        return cls
-    def __ror__(cls: RuleMeta, other: RuleMeta|str|tuple|None) -> RuleMeta:
+    # @overload
+    # def __or__[T:Rule](cls: type[T], other: None) -> type[Optional[T]]: ...
+    # @overload
+    # def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|str|tuple) -> type[Either[T, U]]: ...
+    # def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|str|tuple|None) -> type[Either[T, U]|Optional[T]]:
+    #     # this runs on ClassA | ClassB
+    #     # TODO: Rule1 | Rule2 should generate a new Rule
+    #     if isinstance(other, str):
+    #         print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
+    #         return cls
+    #     if isinstance(other, tuple):
+    #         print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
+    #         return cls
+    #     if other is None:
+    #         return type.__or__(cls, other)
+    #         # return NotImplemented
+    #         # print(f"Custom OR on classes: {cls.__name__} | None")
+    #         # return cls
+    #     print(f"Custom OR on classes: {cls.__name__} | {other.__name__}")
+    #     return cls
+    # @overload
+    # def __ror__[T:Rule](cls: type[T], other:type[None]) -> type[Optional[T]]: ... 
+    # @overload
+    # def __ror__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> type[Either[T|U]]: ...
+    # def __ror__[T:Rule, U:Rule](cls: type[T], other: type[U]|type[None]) -> type[Either[T|U]]|type[Optional[T]]:
+        # ...
+        # return cls | other
+    def __ror__(cls, other):
         return cls | other
 
     def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
@@ -213,7 +230,6 @@ def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most
     #TODO: whatever implementation needed...
     return Repeat[T]
 
-repeat
 
 def optional[T:Rule](arg:type[T]) -> type[Optional[T]]:
     #TODO: whatever implementation needed...
@@ -286,7 +302,7 @@ def test():
         'c'
     class D(Rule):
         'd'
-    a = repeat(A)
+    a = repeat(A, separator='.', at_least=1)
     b = a('aaaa')
     c = b.items[0]
     r = sequence(A,B,D,D)
@@ -299,7 +315,14 @@ def test():
 
 
 
-
+    rule3 = either(A, B, C)
+    apple = rule3('a').item
+    if isinstance(apple, A):
+        apple
+    elif isinstance(apple, B):
+        apple
+    elif isinstance(apple, C):
+        apple
 
 
 
