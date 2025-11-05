@@ -15,7 +15,18 @@ class MyParser(Rule):
 result = MyParser('Hello, World!')
 print(result.name)  # 'World'
 
-result = MyParser('something else')  # would raise a parse failure
+
+# invalid input
+result = MyParser('something else')
+# ParseError: expected "Hello, " at position 0
+#  --> input:1:1
+#   |
+# 1 | something else
+#   | ^^^^^^^^
+#   | |
+#   | expected literal "Hello, " to begin input
+#   |
+# help: the input should start with the literal string "Hello, "
 ```
 
 todo: explain more...
