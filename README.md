@@ -78,3 +78,6 @@ result.build # Build(ids=['3', '14'])
 
 ## Backend
 WIP. goal is to support multiple parser backends. probably start with `lark`. Also probably include a pure python GLL backend
+
+## Looking for the old Turtles?
+⚠️ The turtles project has been rebooted. `v2.0.0` and onward will not be compatible with the original `v1.0.0` release. If you are looking for the original project, see [Roguelazer/turtles](https://github.com/Roguelazer/turtles). 
