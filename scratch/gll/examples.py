@@ -1,5 +1,5 @@
 from typing import Annotated
-from easygrammar import Rule, repeat, char, either, optional, sequence, Repeat, Char, Either, Optional, Sequence, Coerce
+from easygrammar import Rule, repeat, char, either, optional, sequence, separator, at_least, at_most, exactly
 # from typing import Annotated
 
 
@@ -137,12 +137,6 @@ from easygrammar import Rule, repeat, char, either, optional, sequence, Repeat, 
            | "y" | "z"
 """
 
-class A(Rule): ...
-
-args = dict
-# apple: Annotated[Repeat[A], repeat(A, separator=".", at_least=1)]
-# apple: Repeat[A, 0]
-# apple: Repeat[A, args(separator='.', at_least=1)]
 
 class SemVer(Rule):
     major: NumId
@@ -155,25 +149,22 @@ class SemVer(Rule):
 
 class Prerelease(Rule):
     "-"
-    ids: Repeat[Id, args(separator='.', at_least=1)]
-    def __str__(self): return f"-{'.'.join(map(str, self.ids))}"
+    ids: repeat[Id, separator['.'], at_least[1]]
 
 class Build(Rule):
     "+"
-    ids: Repeat[Id, args(separator='.', at_least=1)]
-    def __str__(self): return f"+{'.'.join(map(str, self.ids))}"
+    ids: repeat[Id, separator['.'], at_least[1]]
 
 class NumId(Rule):
-    id: Either['0' | (Char['1-9'], Repeat[Char['0-9']])]
-    def __str__(self): return str(self.id)
+    id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
 
 class Id(Rule):
-    id: Repeat[Char['a-zA-Z0-9-'], args(at_least=1)]
-    def __str__(self): return str(self.id)
+    id: repeat[char['a-zA-Z0-9-'], at_least[1]]
 
 result = SemVer('1.2.3-alpha+3.14')
+result.major.id.item
 if result.prerelease.item is not None:
-    result.prerelease.item.ids
+    a = result.prerelease.item.ids.items[0].id.items[0]
 
 #TODO: consider allowing specifying post processing steps on rules, e.g. NumId gets converted to str, etc. 
 # Could be a __post_init__ method. though to preserve the type safety stuff, perhaps using Coerce is the best bet.

@@ -1,5 +1,5 @@
 from types import NoneType, NotImplementedType, UnionType
-from typing import Self, final, Protocol, Any, Union, overload, Annotated as Coerce
+from typing import Self, final, Protocol, Any, Union, overload, Annotated as Cast
 from abc import ABC, ABCMeta, abstractmethod
 import inspect
 import ast
@@ -8,10 +8,10 @@ import pdb
 
 class RuleMeta(ABCMeta):
     @overload
-    def __or__[T:Rule](cls: type[T], other:type[None]) -> type[Optional[T]]: ...
+    def __or__[T:Rule](cls: type[T], other:type[None]) -> type[optional[T]]: ...
     @overload
-    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> type[Either[T|U]]: ...
-    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|type[None]) -> type[Either[T|U]]|type[Optional[T]]: ...
+    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> type[either[T|U]]: ...
+    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|type[None]) -> type[either[T|U]]|type[optional[T]]: ...
 
     # TODO: something about the typing here prevents Rule|None from working, and it just becomes Any
     # @overload
@@ -191,138 +191,146 @@ class HelperFunction(Protocol):
     def __call__(self, *args: Any, **kwargs: Any) -> type[Rule]: ...
 
 
-class Infinity: ...
-infinity = Infinity()
+# class Infinity: ...
+# infinity = Infinity()
 
 # RuleLike: TypeAlias = type[Rule] | tuple['RuleLike', ...] | str
 
+from typing import Literal
+class char(Literal, Rule): ...
+class separator(Literal): ...
+class at_least(Literal): ...
+class at_most(Literal): ...
+class exactly(Literal): ...
 
-class Char(Rule):
-    # TODO: this might be shaped differently
-    char: str
-class Either[T:Rule](Rule):
+
+# class Char(Rule):
+#     # TODO: this might be shaped differently
+#     char: str
+
+class either[T:Rule](Rule):
     item: T
-class Repeat[T:Rule](Rule):
+class repeat[T:Rule, *Rules](Rule):
     items: list[T]
-class Optional[T:Rule](Rule):
+class optional[T:Rule](Rule):
     item: T|None
-class Sequence[*Ts](Rule):
+class sequence[*Ts](Rule):
     items: tuple[*Ts]
 
 # TBD how this will work
-class _Ambiguous[T:Rule](Rule):
+class _ambiguous[T:Rule](Rule):
     alternatives: list[T]
 
 
-def char(s:str) -> type[Char]:
-    #TODO: whatever implementation needed...
-    return Char
+# def char(s:str) -> type[Char]:
+#     #TODO: whatever implementation needed...
+#     return Char
 
-def either[T:Rule](*args:type[T]) -> type[Either[T]]:
-    #TODO: whatever implementation needed...
-    return Either[T]
+# def either[T:Rule](*args:type[T]) -> type[Either[T]]:
+#     #TODO: whatever implementation needed...
+#     return Either[T]
 
-@overload
-def repeat[T:Rule](arg:type[T],  /, *, separator:str='', exactly:int) -> type[Repeat[T]]: ...
-@overload
-def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity) -> type[Repeat[T]]: ...
-def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity, exactly:int|None=None) -> type[Repeat[T]]:
-    #TODO: whatever implementation needed...
-    return Repeat[T]
-
-
-def optional[T:Rule](arg:type[T]) -> type[Optional[T]]:
-    #TODO: whatever implementation needed...
-    return Optional[T]
-
-@overload
-def sequence[A:Rule](a:type[A], /) -> type[Sequence[A]]: ...
-@overload
-def sequence[A:Rule, B:Rule](a:type[A], b:type[B], /) -> type[Sequence[A, B]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule](a:type[A], b:type[B], c:type[C], /) -> type[Sequence[A, B, C]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule](a:type[A], b:type[B], c:type[C], d:type[D], /) -> type[Sequence[A, B, C, D]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], /) -> type[Sequence[A, B, C, D, E]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], /) -> type[Sequence[A, B, C, D, E, F]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], /) -> type[Sequence[A, B, C, D, E, F, G]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], /) -> type[Sequence[A, B, C, D, E, F, G, H]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], /) -> type[Sequence[A, B, C, D, E, F, G, H, I]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule, Y:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], y:type[Y], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]]: ...
-@overload
-def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule, Y:Rule, Z:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], y:type[Y], z:type[Z], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]]: ...
-@overload
-def sequence[T:Rule](*args:type[T]) -> type[Sequence[*tuple[T, ...]]]: ... # give up and just say it's a tuple of unions of all the possible args
-def sequence(*args):
-    #TODO: whatever implementation needed...
-    return Sequence#[*tuple[T, ...]]
-
-def test():
-    class A(Rule):
-        'a'
-    class B(Rule):
-        'b'
-    class C(Rule):
-        'c'
-    class D(Rule):
-        'd'
-    a = repeat(A, separator='.', at_least=1)
-    b = a('aaaa')
-    c = b.items[0]
-    r = sequence(A,B,D,D)
-    r('').items
-    rule1 = either(A, repeat(B, exactly=5, separator='.'), optional(B))
-    rule1('b.b.b.b.b').item
-
-    rule2 = sequence(A, B, repeat(B), repeat(sequence(A, B)), A)
-    rule2('abbbbbbababababa').items[2].items[1]
+# @overload
+# def repeat[T:Rule](arg:type[T],  /, *, separator:str='', exactly:int) -> type[Repeat[T]]: ...
+# @overload
+# def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity) -> type[Repeat[T]]: ...
+# def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity, exactly:int|None=None) -> type[Repeat[T]]:
+#     #TODO: whatever implementation needed...
+#     return Repeat[T]
 
 
+# def optional[T:Rule](arg:type[T]) -> type[Optional[T]]:
+#     #TODO: whatever implementation needed...
+#     return Optional[T]
 
-    rule3 = either(A, B, C)
-    apple = rule3('a').item
-    if isinstance(apple, A):
-        apple
-    elif isinstance(apple, B):
-        apple
-    elif isinstance(apple, C):
-        apple
+# @overload
+# def sequence[A:Rule](a:type[A], /) -> type[Sequence[A]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule](a:type[A], b:type[B], /) -> type[Sequence[A, B]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule](a:type[A], b:type[B], c:type[C], /) -> type[Sequence[A, B, C]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule](a:type[A], b:type[B], c:type[C], d:type[D], /) -> type[Sequence[A, B, C, D]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], /) -> type[Sequence[A, B, C, D, E]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], /) -> type[Sequence[A, B, C, D, E, F]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], /) -> type[Sequence[A, B, C, D, E, F, G]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], /) -> type[Sequence[A, B, C, D, E, F, G, H]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], /) -> type[Sequence[A, B, C, D, E, F, G, H, I]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule, Y:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], y:type[Y], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]]: ...
+# @overload
+# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule, Y:Rule, Z:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], y:type[Y], z:type[Z], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]]: ...
+# @overload
+# def sequence[T:Rule](*args:type[T]) -> type[Sequence[*tuple[T, ...]]]: ... # give up and just say it's a tuple of unions of all the possible args
+# def sequence(*args):
+#     #TODO: whatever implementation needed...
+#     return Sequence#[*tuple[T, ...]]
+
+# def test():
+#     class A(Rule):
+#         'a'
+#     class B(Rule):
+#         'b'
+#     class C(Rule):
+#         'c'
+#     class D(Rule):
+#         'd'
+#     a = repeat(A, separator='.', at_least=1)
+#     b = a('aaaa')
+#     c = b.items[0]
+#     r = sequence(A,B,D,D)
+#     r('').items
+#     rule1 = either(A, repeat(B, exactly=5, separator='.'), optional(B))
+#     rule1('b.b.b.b.b').item
+
+#     rule2 = sequence(A, B, repeat(B), repeat(sequence(A, B)), A)
+#     rule2('abbbbbbababababa').items[2].items[1]
+
+
+
+#     rule3 = either(A, B, C)
+#     apple = rule3('a').item
+#     if isinstance(apple, A):
+#         apple
+#     elif isinstance(apple, B):
+#         apple
+#     elif isinstance(apple, C):
+#         apple
 
 
 
