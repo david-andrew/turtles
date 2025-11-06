@@ -1,5 +1,5 @@
 from typing import Annotated
-from .easygrammar import Rule, repeat, char, either, optional, sequence, separator, at_least, at_most, exactly
+from turtles import Rule, repeat, char, either, optional, sequence, separator, at_least, at_most, exactly
 # from typing import Annotated
 
 
@@ -155,11 +155,15 @@ class Build(Rule):
     "+"
     ids: repeat[Id, separator['.'], at_least[1]]
 
-class NumId(Rule):
+class NumId(Rule, int):
     id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
 
-class Id(Rule):
+class Id(Rule, str):
     id: repeat[char['a-zA-Z0-9-'], at_least[1]]
+
+a = NumId('1')
+b = Id('1')
+print(a)
 
 result = SemVer('1.2.3-alpha+3.14')
 result.major.id.item

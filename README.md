@@ -5,7 +5,7 @@ Parsing made easy in python. Also serves as a more human readable replacement fo
 Parser grammars are defined analogously to dataclasses, and then the parse result is returned in the same structure.
 
 ```python
-from turtles import Rule, char
+from turtles import Rule, char, repeat, at_least
 
 class MyParser(Rule):
     "Hello, "
