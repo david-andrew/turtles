@@ -10,3 +10,8 @@ python-packages.nix
 
 #python stuff
 __pycache__
+
+
+# autoenv stuff
+.autoenv
+.autoleave
