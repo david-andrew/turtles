@@ -1,5 +1,5 @@
 from typing import Annotated
-from easygrammar import Rule, repeat, char, either, optional, sequence, separator, at_least, at_most, exactly
+from .easygrammar import Rule, repeat, char, either, optional, sequence, separator, at_least, at_most, exactly
 # from typing import Annotated
 
 

@@ -196,6 +196,7 @@ class HelperFunction(Protocol):
 
 # RuleLike: TypeAlias = type[Rule] | tuple['RuleLike', ...] | str
 
+# TODO: consider instead making these just classes that we call with arguments, since they aren't rules (char needs special handling though...)
 from typing import Literal
 class char(Literal, Rule): ...
 class separator(Literal): ...
