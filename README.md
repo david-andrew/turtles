@@ -9,7 +9,7 @@ from turtles import Rule, char
 
 class MyParser(Rule):
     "Hello, "
-    name: repeat(char('a-zA-Z'), at_least=1)
+    name: repeat[char['a-zA-Z'], at_least[1]]
     "!"
 
 result = MyParser('Hello, World!')
@@ -36,7 +36,7 @@ todo: explain more...
 
 Example of grammar for parsing semantic versions:
 ```python
-from turtles import Rule, repeat, char 
+from turtles import Rule, repeat, char, separator, at_least
 
 class SemVer(Rule):
     major: NumId
@@ -49,21 +49,17 @@ class SemVer(Rule):
 
 class Prerelease(Rule):
     "-"
-    ids: repeat(Id, separator='.', at_least=1)
-    def __str__(self): return f"-{'.'.join(map(str, self.ids))}"
+    ids: repeat[Id, separator['.'], at_least[1]]
 
 class Build(Rule):
     "+"
-    ids: repeat(Id, separator='.', at_least=1)
-    def __str__(self): return f"+{'.'.join(map(str, self.ids))}"
+    ids: repeat[Id, separator['.'], at_least[1]]
 
 class NumId(Rule):
-    id: either('0', (char('1-9'), repeat(char('0-9'))))
-    def __str__(self): return str(self.id)
+    id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
 
 class Id(Rule):
-    id: repeat(char('a-zA-Z0-9-'), at_least=1)
-    def __str__(self): return str(self.id)
+    id: repeat[char['a-zA-Z0-9-'], at_least[1]]
 
 # parse a semver
 result = SemVer('1.2.3-alpha+3.14')
