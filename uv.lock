@@ -12,9 +12,21 @@ wheels = [
 ]
 
 [[package]]
+name = "prettyerr"
+version = "0.0.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/1b/e65fb2b9c7eb82a237066cf2b8b05e1247539baad33afae1be1b6fd676ff/prettyerr-0.0.3.tar.gz", hash = "sha256:9c8effb1939c8cbf6e382c77227a9397f7d38aef506fb0494708b707fa4d1756", size = 24889, upload-time = "2026-01-19T23:26:42.349Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b1/32/8cc913d941b7e3a6c553efcf8bcd39f74751c9f7129885a4593e2b2845ca/prettyerr-0.0.3-py3-none-any.whl", hash = "sha256:e6e531c4d54b10c66047332532efbfb8b17e96ce1de4cfb265266ed75aa7992e", size = 12823, upload-time = "2026-01-19T23:26:41.525Z" },
+]
+
+[[package]]
 name = "turtles"
-version = "2.0.0rc0"
+version = "2.0.0rc1"
 source = { editable = "." }
+dependencies = [
+    { name = "prettyerr" },
+]
 
 [package.optional-dependencies]
 all = [
@@ -28,5 +40,6 @@ lark = [
 requires-dist = [
     { name = "lark", marker = "extra == 'all'", specifier = ">=1.3.1" },
     { name = "lark", marker = "extra == 'lark'", specifier = ">=1.3.1" },
+    { name = "prettyerr", specifier = ">=0.0.3" },
 ]
 provides-extras = ["lark", "all"]

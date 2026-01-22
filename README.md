@@ -18,15 +18,15 @@ print(result.name)  # 'World'
 
 # invalid input
 result = MyParser('something else')
-# ParseError: expected "Hello, " at position 0
-#  --> input:1:1
-#   |
-# 1 | something else
-#   | ^^^^^^^^
-#   | |
-#   | expected literal "Hello, " to begin input
-#   |
-# help: the input should start with the literal string "Hello, "
+# Error: ParseError: expected "Hello, " at position 0
+# 
+#     ╭─[<input>:1:1]
+#   1 | something else
+#     · ────┬────
+#     ·     ╰─ expected literal string 'Hello, ' to begin input
+#     ╰───
+#   help: the input should start with the literal string "Hello, "
+# 
 ```
 
 todo: explain more...
