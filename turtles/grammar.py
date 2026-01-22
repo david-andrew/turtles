@@ -56,24 +56,43 @@ class GrammarRepeat:
     def __str__(self) -> str:
         inner = str(self.element)
         
-        # determine quantifier
-        if self.at_least == 0 and self.at_most is None:
-            quant = '*'
-        elif self.at_least == 1 and self.at_most is None:
-            quant = '+'
-        elif self.at_least == 0 and self.at_most == 1:
-            quant = '?'
-        elif self.at_least == self.at_most:
-            quant = f'{{{self.at_least}}}'
-        elif self.at_most is None:
-            quant = f'{{{self.at_least},}}'
-        else:
-            quant = f'{{{self.at_least},{self.at_most}}}'
-        
         if self.separator:
+            # Expand separator pattern: repeat[A, sep] becomes (A (sep A)*)
+            # Always wrap in parens since it's a multi-part pattern
             sep_escaped = self.separator.replace('\\', '\\\\').replace('"', '\\"')
-            return f'({inner} % "{sep_escaped}"){quant}'
-        return f'{inner}{quant}'
+            sep_lit = f'"{sep_escaped}"'
+            
+            if self.at_least == 0 and self.at_most is None:
+                # Zero or more with separator: (A (sep A)*)?
+                return f'({inner} ({sep_lit} {inner})*)?'
+            elif self.at_least == 1 and self.at_most is None:
+                # One or more with separator: (A (sep A)*)
+                return f'({inner} ({sep_lit} {inner})*)'
+            elif self.at_least == 0 and self.at_most == 1:
+                # Zero or one: A?
+                return f'{inner}?'
+            else:
+                # Complex bounds - show expanded form with bounds notation
+                if self.at_least == self.at_most:
+                    return f'({inner} ({sep_lit} {inner})*){{{self.at_least}}}'
+                elif self.at_most is None:
+                    return f'({inner} ({sep_lit} {inner})*){{{self.at_least},}}'
+                else:
+                    return f'({inner} ({sep_lit} {inner})*){{{self.at_least},{self.at_most}}}'
+        
+        # No separator - simple quantifier
+        if self.at_least == 0 and self.at_most is None:
+            return f'{inner}*'
+        elif self.at_least == 1 and self.at_most is None:
+            return f'{inner}+'
+        elif self.at_least == 0 and self.at_most == 1:
+            return f'{inner}?'
+        elif self.at_least == self.at_most:
+            return f'{inner}{{{self.at_least}}}'
+        elif self.at_most is None:
+            return f'{inner}{{{self.at_least},}}'
+        else:
+            return f'{inner}{{{self.at_least},{self.at_most}}}'
 
 
 @dataclass

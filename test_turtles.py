@@ -42,7 +42,7 @@ class MyParser(Rule):
 
 class Add(Rule):
     left: AST
-    char['+-']
+    char[r'+\-']
     right: AST
 class Mul(Rule):
     left: AST
@@ -50,12 +50,12 @@ class Mul(Rule):
     right: AST
 class Pow(Rule):
     left: AST
-    char['^']
+    '^'
     right: AST
 class Group(Rule):
-    char['(']
+    '('
     expr: AST
-    char[')']
+    ')'
 class Id(Rule):
     id: repeat[char['a-zA-Z0-9_'], at_least[1]]
 class Num(Rule):

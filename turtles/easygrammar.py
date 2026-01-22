@@ -286,6 +286,18 @@ class Rule(ABC, metaclass=RuleMeta):
                 sequence.append(("decl", var_name, annotation_text))
                 continue
 
+            # capture other bare expressions (e.g., char['+-'], sequence[...], etc.)
+            if isinstance(stmt, ast.Expr):
+                expr_text = ast.get_source_segment(file_source, stmt.value)
+                if expr_text is None:
+                    try:
+                        expr_text = ast.unparse(stmt.value)
+                    except Exception:
+                        continue
+                # Store as anonymous declaration (no name, just the expression)
+                sequence.append(("decl", None, expr_text))
+                continue
+
         return sequence
 
 
