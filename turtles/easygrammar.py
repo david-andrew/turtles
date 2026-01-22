@@ -5,7 +5,46 @@ from abc import ABC, ABCMeta, abstractmethod
 import inspect
 import ast
 
-import pdb
+from .grammar import register_rule, _build_grammar
+
+
+class SourceNotAvailableError(Exception):
+    """Raised when the turtles DSL is used outside of a source file context."""
+    pass
+
+
+def _check_source_available() -> None:
+    """
+    Check that the module importing turtles has source code available.
+    Raises SourceNotAvailableError if called from REPL, exec(), etc.
+    """
+    frame = inspect.currentframe()
+    try:
+        # Walk up the stack to find the first frame outside of the turtles package
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            # skip frames from within the turtles package itself
+            if 'turtles' in filename and ('easygrammar' in filename or '__init__' in filename or 'grammar' in filename):
+                frame = frame.f_back
+                continue
+            # skip importlib internals
+            if 'importlib' in filename or filename.startswith('<frozen'):
+                frame = frame.f_back
+                continue
+            # found the caller - check if it has source
+            if filename.startswith('<') or not filename:
+                raise SourceNotAvailableError(
+                    f"The turtles DSL requires source code to be available. "
+                    f"Cannot import from '{filename}'. "
+                    f"Please use turtles from a .py file, not from the REPL, exec(), or eval()."
+                )
+            # source is available
+            return
+    finally:
+        del frame
+
+
+_check_source_available()
 
 
 """
@@ -88,7 +127,7 @@ class Rule(ABC, metaclass=RuleMeta):
 
 
         if not source_file:
-            raise ValueError(f'Rule subclass `{target_cls.__name__}` must be defined in a file (e.g. cannot create a grammar rule in the REPL). Source code inspection failed: {e}') from e
+            raise ValueError(f'Rule subclass `{target_cls.__name__}` must be defined in a file (e.g. cannot create a grammar rule in the REPL). Source code inspection failed.')
         with open(source_file, "r") as fh:
             file_source = fh.read()
 
@@ -147,6 +186,18 @@ class Rule(ABC, metaclass=RuleMeta):
         # capture the ordered sequence of class-body expressions and declarations
         sequence = Rule._collect_sequence_for_class(cls)
         setattr(cls, "_sequence", sequence)
+
+        # build grammar and register
+        try:
+            source_file = inspect.getsourcefile(cls) or ""
+            _, line_no = inspect.getsourcelines(cls)
+        except OSError:
+            source_file = ""
+            line_no = 0
+        
+        grammar_rule = _build_grammar(cls.__name__, sequence, source_file, line_no)
+        register_rule(grammar_rule)
+        setattr(cls, "_grammar", grammar_rule)
 
 
     # def __repr__(self) -> str:
