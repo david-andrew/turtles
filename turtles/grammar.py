@@ -175,6 +175,9 @@ def lookup_by_name(name: str, from_file: str | None = None, from_line: int | Non
 
 
 def get_all_rules() -> list[GrammarRule]:
+    # Auto-register any RuleUnion objects from caller's scope
+    from .easygrammar import _auto_register_unions
+    _auto_register_unions()
     return list(_registry_by_location.values())
 
 

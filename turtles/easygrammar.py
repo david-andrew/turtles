@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from types import NoneType, NotImplementedType, UnionType
 import typing
-from typing import Self, final, Protocol, Any, Union, overload, Annotated as Cast
+from typing import Self, final, Protocol, Any, Union, overload, Annotated as Cast, TYPE_CHECKING
 from abc import ABC, ABCMeta, abstractmethod
 import inspect
 import ast
 
 from .grammar import register_rule, _build_grammar
+
+if TYPE_CHECKING:
+    from .grammar import GrammarRule
 
 
 class SourceNotAvailableError(Exception):
@@ -53,43 +58,152 @@ Notes:
 - __or__ for Rule|None should return Optional[Rule]
 """
 
+_all_rule_unions: list['RuleUnion'] = []
+
+
+class RuleUnion:
+    """
+    Represents a union of Rule classes (A | B | C).
+    Can be registered as a named rule.
+    """
+    def __init__(self, alternatives: list[type['Rule']], *, _source_file: str | None = None, _source_line: int | None = None):
+        self.alternatives = alternatives
+        self._name: str | None = None
+        self._grammar: GrammarRule | None = None
+        self._source_file = _source_file
+        self._source_line = _source_line
+        
+        # Track for auto-discovery
+        _all_rule_unions.append(self)
+        
+        # Capture source location if not provided
+        if _source_file is None:
+            frame = inspect.currentframe()
+            try:
+                # Walk up to find the first frame outside this module
+                caller = frame.f_back
+                while caller and 'easygrammar' in caller.f_code.co_filename:
+                    caller = caller.f_back
+                if caller:
+                    self._source_file = caller.f_code.co_filename
+                    self._source_line = caller.f_lineno
+            finally:
+                del frame
+    
+    def __or__(self, other: type['Rule'] | 'RuleUnion') -> 'RuleUnion':
+        if isinstance(other, RuleUnion):
+            return RuleUnion(self.alternatives + other.alternatives, 
+                           _source_file=self._source_file, _source_line=self._source_line)
+        if other is type(None) or other is None:
+            return RuleUnion(self.alternatives + [None],
+                           _source_file=self._source_file, _source_line=self._source_line)
+        return RuleUnion(self.alternatives + [other],
+                        _source_file=self._source_file, _source_line=self._source_line)
+    
+    def __ror__(self, other: type['Rule']) -> 'RuleUnion':
+        if isinstance(other, RuleUnion):
+            return RuleUnion(other.alternatives + self.alternatives,
+                           _source_file=self._source_file, _source_line=self._source_line)
+        return RuleUnion([other] + self.alternatives,
+                        _source_file=self._source_file, _source_line=self._source_line)
+    
+    def _register_with_name(self, name: str, source_file: str, source_line: int) -> None:
+        """Internal registration with explicit source info."""
+        from .grammar import GrammarRule, GrammarSequence, GrammarChoice, GrammarRef, GrammarLiteral, register_rule
+        
+        if self._grammar is not None:
+            return  # Already registered
+        
+        self._name = name
+        
+        # Build alternatives
+        alt_elements = []
+        for alt in self.alternatives:
+            if alt is None:
+                alt_elements.append(GrammarLiteral(""))
+            else:
+                alt_elements.append(GrammarRef(alt.__name__, source_file, source_line))
+        
+        choice = GrammarChoice(alt_elements)
+        self._grammar = GrammarRule(
+            name=name,
+            source_file=source_file,
+            source_line=source_line,
+            body=GrammarSequence([choice]),
+        )
+        register_rule(self._grammar)
+    
+    def register(self, name: str) -> 'RuleUnion':
+        """Explicitly register this union as a named rule."""
+        frame = inspect.currentframe()
+        try:
+            caller = frame.f_back
+            source_file = caller.f_code.co_filename
+            source_line = caller.f_lineno
+        finally:
+            del frame
+        
+        self._register_with_name(name, source_file, source_line)
+        return self
+    
+    def __str__(self) -> str:
+        alt_names = [a.__name__ if a is not None else 'ε' for a in self.alternatives]
+        choice_str = ' | '.join(alt_names)
+        if self._name:
+            return f'{self._name} ::= {choice_str}'
+        return f'({choice_str})'
+    
+    def __repr__(self) -> str:
+        alt_names = [a.__name__ if a is not None else 'None' for a in self.alternatives]
+        return f"RuleUnion([{', '.join(alt_names)}])"
+
+
+def _auto_register_unions() -> None:
+    """
+    Scan for unregistered RuleUnion objects in the caller's globals
+    and register them with their variable names.
+    """
+    frame = inspect.currentframe()
+    try:
+        # Walk up to find the first frame outside grammar/easygrammar modules
+        caller = frame.f_back
+        while caller:
+            filename = caller.f_code.co_filename
+            if 'grammar.py' not in filename and 'easygrammar.py' not in filename:
+                break
+            caller = caller.f_back
+        
+        if not caller:
+            return
+        
+        # Check both globals and locals
+        all_vars = {**caller.f_globals, **caller.f_locals}
+        
+        for name, value in all_vars.items():
+            if isinstance(value, RuleUnion) and value._grammar is None:
+                source_file = value._source_file or caller.f_code.co_filename
+                source_line = value._source_line or 0
+                value._register_with_name(name, source_file, source_line)
+    finally:
+        del frame
+
+
 class RuleMeta(ABCMeta):
     @overload
-    def __or__[T:Rule](cls: type[T], other:type[None]) -> type[typing.Optional[T]]: ...
+    def __or__[T:Rule](cls: type[T], other:type[None]) -> RuleUnion: ...
     @overload
-    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> type[typing.Union[T,U]]: ...
-    # def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|type[None]) -> type[either[T|U]]|type[typing.Optional[T]]: ...
+    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> RuleUnion: ...
+    def __or__(cls, other):
+        if isinstance(other, RuleUnion):
+            return RuleUnion([cls] + other.alternatives)
+        if other is type(None) or other is None:
+            return RuleUnion([cls, None])
+        return RuleUnion([cls, other])
 
-    # TODO: something about the typing here prevents Rule|None from working, and it just becomes Any
-    # @overload
-    # def __or__[T:Rule](cls: type[T], other: None) -> type[Optional[T]]: ...
-    # @overload
-    # def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|str|tuple) -> type[Either[T, U]]: ...
-    # def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]|str|tuple|None) -> type[Either[T, U]|Optional[T]]:
-    #     # this runs on ClassA | ClassB
-    #     # TODO: Rule1 | Rule2 should generate a new Rule
-    #     if isinstance(other, str):
-    #         print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
-    #         return cls
-    #     if isinstance(other, tuple):
-    #         print(f"Custom OR on classes: {cls.__name__} | {repr(other)}")
-    #         return cls
-    #     if other is None:
-    #         return type.__or__(cls, other)
-    #         # return NotImplemented
-    #         # print(f"Custom OR on classes: {cls.__name__} | None")
-    #         # return cls
-    #     print(f"Custom OR on classes: {cls.__name__} | {other.__name__}")
-    #     return cls
-    # @overload
-    # def __ror__[T:Rule](cls: type[T], other:type[None]) -> type[Optional[T]]: ... 
-    # @overload
-    # def __ror__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> type[Either[T|U]]: ...
-    # def __ror__[T:Rule, U:Rule](cls: type[T], other: type[U]|type[None]) -> type[Either[T|U]]|type[Optional[T]]:
-        # ...
-        # return cls | other
     def __ror__(cls, other):
-        return cls | other
+        if isinstance(other, RuleUnion):
+            return RuleUnion(other.alternatives + [cls])
+        return RuleUnion([other, cls])
 
     def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
         # TODO: whole process of parsing the input string
@@ -275,8 +389,32 @@ class exactly:
 #     # TODO: this might be shaped differently
 #     char: str
 
-class either[T:Rule](Rule):
-    item: T
+class either(Rule):
+    """
+    Represents a choice between alternatives.
+    Usage: either[A, B, C] or either[A | B | C]
+    """
+    item: Any  # Type is determined by the alternatives
+    
+    def __class_getitem__(cls, items):
+        # When either[A, B, C] is used, return a RuleUnion
+        if not isinstance(items, tuple):
+            items = (items,)
+        
+        alternatives = []
+        for item in items:
+            if isinstance(item, type) and issubclass(item, Rule):
+                alternatives.append(item)
+            elif isinstance(item, RuleUnion):
+                alternatives.extend(item.alternatives)
+            elif item is None or item is type(None):
+                alternatives.append(None)
+        
+        if alternatives:
+            return RuleUnion(alternatives)
+        
+        # Fallback: return a generic alias for type checking purposes
+        return super().__class_getitem__(items)
 class repeat[T:Rule, *Rules](Rule):
     items: list[T]
 class optional[T:Rule](Rule):

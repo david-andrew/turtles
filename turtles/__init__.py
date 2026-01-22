@@ -1,5 +1,5 @@
 # from .test import hello
-from .easygrammar import Rule, char, repeat, either, sequence, optional, at_least, at_most, exactly, separator, SourceNotAvailableError
+from .easygrammar import Rule, RuleUnion, char, repeat, either, sequence, optional, at_least, at_most, exactly, separator, SourceNotAvailableError
 from .grammar import (
     GrammarElement,
     GrammarLiteral,
