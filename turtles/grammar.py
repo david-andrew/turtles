@@ -174,11 +174,42 @@ def lookup_by_name(name: str, from_file: str | None = None, from_line: int | Non
     return same_file[-1]
 
 
-def get_all_rules() -> list[GrammarRule]:
+def get_all_rules(*, all_files: bool = False) -> list[GrammarRule]:
+    """
+    Get all registered grammar rules.
+    
+    By default, returns only rules defined in the caller's file.
+    Pass all_files=True to get rules from all files.
+    """
+    import inspect
+    
     # Auto-register any RuleUnion objects from caller's scope
     from .easygrammar import _auto_register_unions
     _auto_register_unions()
-    return list(_registry_by_location.values())
+    
+    if all_files:
+        return list(_registry_by_location.values())
+    
+    # Get caller's filename
+    frame = inspect.currentframe()
+    try:
+        caller = frame.f_back
+        # Walk up past any wrapper frames in grammar/easygrammar
+        while caller:
+            filename = caller.f_code.co_filename
+            if 'grammar.py' not in filename and 'easygrammar.py' not in filename:
+                break
+            caller = caller.f_back
+        
+        if not caller:
+            return list(_registry_by_location.values())
+        
+        caller_file = caller.f_code.co_filename
+    finally:
+        del frame
+    
+    # Filter to rules from caller's file
+    return [r for r in _registry_by_location.values() if r.source_file == caller_file]
 
 
 def clear_registry() -> None:

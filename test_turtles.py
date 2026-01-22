@@ -1,8 +1,6 @@
 """Test pretty printing and source guard."""
 from turtles import Rule, char, repeat, at_least, separator, either, optional, sequence
-from turtles import get_all_rules, clear_registry
-
-clear_registry()
+from turtles import get_all_rules
 
 class MyParser(Rule):
     "Hello, "
