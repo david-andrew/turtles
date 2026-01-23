@@ -59,7 +59,7 @@ class NumId(Rule):
     id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
 
 class Id(Rule):
-    id: repeat[char['a-zA-Z0-9-'], at_least[1]]
+    id: repeat[char['a-zA-Z0-9'], at_least[1]]
 
 # parse a semver
 result = SemVer('1.2.3-alpha+3.14')

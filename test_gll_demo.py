@@ -13,7 +13,7 @@ NOTE: Rules are defined INSIDE functions to demonstrate that the parser
 correctly discovers locally-scoped rules. This wasn't possible before!
 """
 from textwrap import indent
-from turtles import Rule, RuleUnion, char, repeat, at_least, separator, either, sequence
+from turtles import Rule, RuleUnion, char, repeat, at_least, exactly, separator, either, sequence, optional
 
 
 def repr_result(result, indent_str='  '):
@@ -216,8 +216,73 @@ def demo_nested():
     print()
 
 
-def demo_json():
+# =============================================================================
+# Example 7: JSON Parsers
+# =============================================================================
+
+def demo_simple_json():
     """JSON parser"""
+
+    class JNull(Rule):
+        "null"
+
+    class JBool(Rule):
+        value: either["true", "false"]
+
+    class JNumber(Rule):
+        value: repeat[char['0-9'], at_least[1]]
+
+    class JString(Rule):
+        '"'
+        value: repeat[char['a-zA-Z0-9_']]
+        '"'
+
+    class JArray(Rule):
+        '['
+        items: repeat[JSONValue, separator[',']]
+        ']'
+
+    class Pair(Rule):
+        key: JString
+        ':'
+        value: JSONValue
+
+    class JObject(Rule):
+        '{'
+        pairs: repeat[Pair, separator[',']]
+        '}'
+
+    JSONValue = JNull | JBool | JNumber | JString | JArray | JObject
+
+    print("=" * 60)
+    print("Example 7: Simple JSON Parser")
+    print("=" * 60)
+    print(JSONValue)
+    print(JNull)
+    print(JBool)
+    print(JNumber)
+    print(JString)
+    print(JArray)
+    print(JObject)
+    print(Pair)
+    print()
+
+    for test in [
+        "null", "true", "false", "123", '"hello"', '[1,2,3]', '{"a":1,"b":2}',
+        "[]", "{}", '[1,2,3]', '{"a":1,"b":2,"c":3}',
+        '{"glossary":{"title":"example glossary","GlossDiv":{"title":"S","GlossList":{"GlossEntry":{"ID":"SGML","SortAs":"SGML","GlossTerm":"Standard Generalized Markup Language","Acronym":"SGML","Abbrev":"ISO 8879:1986","GlossDef":{"para":"A meta-markup language, used to create markup languages such as DocBook.","GlossSeeAlso":["GML","XML"]},"GlossSee":"markup"}}}}}',
+    ]:
+        result = JSONValue(test)
+        print(f"  '{test}' -> {type(result).__name__}: {result}")
+        repr_result(result)
+        print()
+    print()
+
+
+
+
+def demo_full_json():
+    """Full JSON parser"""
     class Whitespace(Rule):
         repeat[char['\x20\t\n\r']]
 
@@ -232,12 +297,36 @@ def demo_json():
     class JBool(Rule):
         value: either["true", "false"]
 
-    class JNumber(Rule):
+    class Int(Rule):
+        value: either['0', sequence[char['1-9'], repeat[char['0-9']]]]
+    
+    class Fractional(Rule):
+        '.'
         value: repeat[char['0-9'], at_least[1]]
+
+    class Exponent(Rule):
+        char['eE']
+        sign: optional[char['+-']]
+        value: repeat[char['0-9'], at_least[1]]
+
+    class JNumber(Rule):
+        sign: optional['-']
+        whole: Int
+        fractional: optional[Fractional]
+        exponent: optional[Exponent]
+
+
+    class SimpleEscape(Rule):
+        ch: either[r"\\", r"\"", r"\/", r"\b", r"\f", r"\n", r"\r", r"\t"]
+    
+    class HexEscape(Rule):
+        ch: sequence[r"\u", repeat[char['0-9a-fA-F'], exactly[4]]]
+    
+    Escape = SimpleEscape | HexEscape
 
     class JString(Rule):
         '"'
-        value: repeat[char['a-zA-Z0-9_']]   # TODO: more correct string chars. e.g. basically any unicode, and escapes
+        value: repeat[char['\x20-\x21\x23-\x5B\x5D-\U0010FFFF'] | Escape]
         '"'
 
     class JArray(Rule):
@@ -260,13 +349,22 @@ def demo_json():
         pairs: repeat[Pair, separator[Comma]]
         Whitespace
         '}'
+    
+    class JSON(Rule):
+        Whitespace
+        value: JSONValue
+        Whitespace
 
     JSONValue = JNull | JBool | JNumber | JString | JArray | JObject
 
+
     print("=" * 60)
-    print("Example 7: JSON Parser")
+    print("Example 7: Full JSON Parser")
     print("=" * 60)
     print(JSONValue)
+    print(JSON)
+    print(Whitespace)
+    print(Comma)
     print(JNull)
     print(JBool)
     print(JNumber)
@@ -277,11 +375,15 @@ def demo_json():
     print()
 
     for test in [
-        "null", "true", "false", "123", '"hello"', '[1, 2, 3]', '{"a":1, "b":2}',
-        "[]", "{}", '[ 1, 2, 3 ]', '{ "a" : 1, "b" : 2, "c" : 3 }',
+        'null', 'true', 'false', '123', '"hello"', '[1, 2, 3]', '{"a":1, "b":2}',
+        '-123', '1.23', '1.23e4', '1.23e-4', '1.23e+4', '1E9', '2e-9', '1E+9',
+        '""', '"simple"', '"with space"', r'"quote \""', r'"backslash \\"', r'"slash \/"', r'"controls: \b\f\n\r\t"',
+        r'"unicode: \u0041\u03BB"', '"raw unicode: λ你好"',
+        '[]', '[ 1, 2, 3 ]', '[null, true, false, 1, 2, 3]', '[1, [2, 3], {"a":4}]', 
+        '{}', '{"a" : 1}', '{"a": 1, "b": [true, false], "c": {"d": "x"}}', '{ "a" : [1, 2, 3], "b" : { "c": null } }',
         '{ "glossary": { "title": "example glossary", "GlossDiv": { "title": "S", "GlossList": { "GlossEntry": { "ID": "SGML", "SortAs": "SGML", "GlossTerm": "Standard Generalized Markup Language", "Acronym": "SGML", "Abbrev": "ISO 8879:1986", "GlossDef": { "para": "A meta-markup language, used to create markup languages such as DocBook.", "GlossSeeAlso": ["GML", "XML"] }, "GlossSee": "markup" } } } } }',
     ]:
-        result = JSONValue(test)
+        result = JSON(test)
         print(f"  '{test}' -> {type(result).__name__}: {result}")
         repr_result(result)
         print()
