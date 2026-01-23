@@ -571,7 +571,7 @@ def _extract_captures(
         return name.isidentifier()
     
     # Strategy 1: Look for explicit :name capture nodes
-    def visit(node: 'ParseTree', parent: 'ParseTree | None' = None, is_first: bool = False):
+    def visit(node: 'ParseTree', parent: 'ParseTree | None' = None, grandparent: 'ParseTree | None' = None, is_first: bool = False):
         """Visit tree nodes, collecting captures."""
         # If this is a simple capture node (just :name)
         if is_simple_capture_label(node.label):
@@ -583,35 +583,54 @@ def _extract_captures(
             # this might be a compound label pattern where the capture marker is at the end
             # e.g., parent label "[1-9]+:value" with capture ":value" at end
             # The capture marker is placed AFTER the content it captures.
+            #
+            # ONLY apply this when there are NO sibling captures in the compound structure.
+            # Check both parent AND grandparent for multiple captures.
             if node.start == node.end and parent is not None and parent.start < parent.end:
                 # Only use parent text if parent label ends with this capture
                 if parent.label.endswith(f':{capture_name}') or parent.label.endswith(f'+:{capture_name}'):
-                    # Check if the preceding siblings are simple terminals (not compound structures)
-                    # If there's a compound sibling (containing '+' or ':' internally), 
-                    # this capture might genuinely have no content
-                    preceding_siblings = []
-                    for sibling in parent.children:
-                        if sibling is node:
-                            break
-                        preceding_siblings.append(sibling)
+                    # Check if parent or grandparent has multiple captures
+                    # If so, each capture is separate and terminals between are anonymous
+                    has_sibling_captures = False
                     
-                    # Check if any sibling is a compound structure or Rule
-                    has_compound_sibling = False
-                    for sib in preceding_siblings:
-                        # Compound label containing other captures or Rules
-                        if '+' in sib.label or sib.label in rule_classes:
-                            has_compound_sibling = True
-                            break
+                    # Check parent's label
+                    parent_parts = parent.label.split('+')
+                    capture_parts = [p for p in parent_parts if p.startswith(':')]
+                    if len(capture_parts) > 1:
+                        has_sibling_captures = True
                     
-                    if not has_compound_sibling:
-                        # Simple case: preceding siblings are terminals, content belongs to this capture
-                        content_start = parent.start
-                        content_end = node.start
+                    # Also check grandparent if available
+                    if not has_sibling_captures and grandparent is not None:
+                        gp_parts = grandparent.label.split('+')
+                        gp_capture_parts = [p for p in gp_parts if p.startswith(':')]
+                        if len(gp_capture_parts) > 1:
+                            has_sibling_captures = True
+                    
+                    if not has_sibling_captures:
+                        # Check if the preceding siblings are simple terminals (not compound structures)
+                        preceding_siblings = []
+                        for sibling in parent.children:
+                            if sibling is node:
+                                break
+                            preceding_siblings.append(sibling)
                         
-                        if content_start < content_end:
-                            text = input_str[content_start:content_end]
-                            if text:
-                                captures[capture_name].append(text)
+                        # Check if any sibling is a compound structure or Rule
+                        has_compound_sibling = False
+                        for sib in preceding_siblings:
+                            # Compound label containing other captures or Rules
+                            if '+' in sib.label or sib.label in rule_classes:
+                                has_compound_sibling = True
+                                break
+                        
+                        if not has_compound_sibling:
+                            # Simple case: preceding siblings are terminals that belong to this capture
+                            content_start = parent.start
+                            content_end = node.start
+                            
+                            if content_start < content_end:
+                                text = input_str[content_start:content_end]
+                                if text:
+                                    captures[capture_name].append(text)
                     return
             
             # Extract values from this capture's content
@@ -627,10 +646,10 @@ def _extract_captures(
         
         # Visit children (including compound labels that may contain captures)
         for child in node.children:
-            visit(child, parent=node, is_first=False)
+            visit(child, parent=node, grandparent=parent, is_first=False)
     
     # Visit starting from root
-    visit(tree, parent=None, is_first=True)
+    visit(tree, parent=None, grandparent=None, is_first=True)
     
     # Strategy 2: Look at the grammar structure for captured references
     # This handles cases like key:JString where the capture isn't explicit in the tree
