@@ -1,6 +1,6 @@
 [project]
 name = "turtles"
-version = "2.0.0rc1"
+version = "2.0.0"
 description = "Pythonic parser tools"
 readme = "README.md"
 authors = [{ name = "David Samson", email = "david.andrew.engineer@gmail.com" }]

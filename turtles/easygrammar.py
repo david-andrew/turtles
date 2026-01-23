@@ -11,6 +11,7 @@ from .grammar import register_rule, _build_grammar
 
 if TYPE_CHECKING:
     from .grammar import GrammarRule
+    from .backend.gll import ParseTree, CompiledGrammar
 
 
 class SourceNotAvailableError(Exception):
@@ -60,11 +61,75 @@ Notes:
 
 _all_rule_unions: list['RuleUnion'] = []
 
+# Cache of local scopes captured at rule/union definition time
+# Maps frame identity (file, function name, line) to locals snapshot
+_captured_locals: dict[tuple[str, str, int], dict[str, object]] = {}
 
-class RuleUnion:
+
+def _capture_caller_locals() -> None:
+    """
+    Capture a snapshot of the caller's locals.
+    This allows rules defined inside functions to be discovered later.
+    """
+    frame = inspect.currentframe()
+    try:
+        # Walk up to find the first frame outside the turtles package
+        caller = frame.f_back
+        while caller:
+            filename = caller.f_code.co_filename
+            if 'easygrammar.py' not in filename and 'grammar.py' not in filename:
+                break
+            caller = caller.f_back
+        
+        if caller:
+            # Use (filename, function name, first line) as key for deduplication
+            key = (caller.f_code.co_filename, caller.f_code.co_name, caller.f_code.co_firstlineno)
+            # Update the snapshot (later captures override earlier, which is what we want)
+            _captured_locals[key] = dict(caller.f_locals)
+    finally:
+        del frame
+
+
+def _get_all_captured_vars() -> dict[str, object]:
+    """
+    Get all variables from captured local scopes plus caller's current scope.
+    Returns a dict with all discovered variables (later captures override earlier).
+    """
+    result: dict[str, object] = {}
+    
+    # First, include all previously captured locals
+    for locals_snapshot in _captured_locals.values():
+        result.update(locals_snapshot)
+    
+    # Then, walk the current call stack to find current locals
+    frame = inspect.currentframe()
+    try:
+        caller = frame.f_back
+        while caller:
+            filename = caller.f_code.co_filename
+            # Skip turtles internals and Python/importlib internals
+            if ('easygrammar.py' not in filename and 
+                'grammar.py' not in filename and
+                'gll.py' not in filename and
+                'importlib' not in filename and
+                not filename.startswith('<frozen')):
+                result.update(caller.f_locals)
+                result.update(caller.f_globals)
+            caller = caller.f_back
+    finally:
+        del frame
+    
+    return result
+
+
+class RuleUnion[T]:
     """
     Represents a union of Rule classes (A | B | C).
     Can be registered as a named rule.
+    
+    Supports disambiguation via:
+        union.precedence = [HighestPriorityRule, ..., LowestPriorityRule]
+        union.associativity = {Rule: 'left', OtherRule: 'right'}
     """
     def __init__(self, alternatives: list[type['Rule']], *, _source_file: str | None = None, _source_line: int | None = None):
         self.alternatives = alternatives
@@ -73,8 +138,15 @@ class RuleUnion:
         self._source_file = _source_file
         self._source_line = _source_line
         
+        # Disambiguation rules
+        self.precedence: list[type['Rule']] = []
+        self.associativity: dict[type['Rule'], str] = {}
+        
         # Track for auto-discovery
         _all_rule_unions.append(self)
+        
+        # Capture caller's locals so we can find the variable name later
+        _capture_caller_locals()
         
         # Capture source location if not provided
         if _source_file is None:
@@ -90,7 +162,13 @@ class RuleUnion:
             finally:
                 del frame
     
-    def __or__(self, other: type['Rule'] | 'RuleUnion') -> 'RuleUnion':
+    @overload
+    def __or__[U: Rule](self, other: type[U]) -> 'RuleUnion[T | U]': ...
+    @overload
+    def __or__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[T | U]': ...
+    @overload
+    def __or__(self, other: type[None]) -> 'RuleUnion[T | None]': ...
+    def __or__(self, other):
         if isinstance(other, RuleUnion):
             return RuleUnion(self.alternatives + other.alternatives, 
                            _source_file=self._source_file, _source_line=self._source_line)
@@ -100,7 +178,11 @@ class RuleUnion:
         return RuleUnion(self.alternatives + [other],
                         _source_file=self._source_file, _source_line=self._source_line)
     
-    def __ror__(self, other: type['Rule']) -> 'RuleUnion':
+    @overload
+    def __ror__[U: Rule](self, other: type[U]) -> 'RuleUnion[U | T]': ...
+    @overload
+    def __ror__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[U | T]': ...
+    def __ror__(self, other):
         if isinstance(other, RuleUnion):
             return RuleUnion(other.alternatives + self.alternatives,
                            _source_file=self._source_file, _source_line=self._source_line)
@@ -156,43 +238,106 @@ class RuleUnion:
     def __repr__(self) -> str:
         alt_names = [a.__name__ if a is not None else 'None' for a in self.alternatives]
         return f"RuleUnion([{', '.join(alt_names)}])"
+    
+    def __call__(self, raw: str) -> T:
+        """Parse input string using this union as the start rule."""
+        from .backend.gll import (
+            CompiledGrammar, GLLParser, DisambiguationRules, ParseError
+        )
+        from .grammar import get_all_rules
+        
+        # Try to discover the variable name for this union before auto-generating
+        # This allows unions defined in local scopes to get proper names
+        if self._grammar is None:
+            _auto_register_unions()  # Try to find variable name first
+        
+        # Ensure this union is registered
+        if self._grammar is None:
+            if self._name is None:
+                # Auto-generate a name (fallback if variable name wasn't found)
+                self._name = "_Union_" + "_".join(
+                    a.__name__ if a is not None else "None" 
+                    for a in self.alternatives
+                )
+            self._register_with_name(
+                self._name,
+                self._source_file or "",
+                self._source_line or 0,
+            )
+        
+        # Get all registered rules
+        rules = get_all_rules(all_files=True)
+        
+        # Build disambiguation rules
+        disambig = DisambiguationRules()
+        if self.precedence:
+            disambig.priority = [
+                r.__name__ if isinstance(r, type) else str(r)
+                for r in self.precedence
+            ]
+        if self.associativity:
+            disambig.associativity = {
+                (r.__name__ if isinstance(r, type) else str(r)): assoc
+                for r, assoc in self.associativity.items()
+            }
+        
+        # Compile and parse
+        grammar = CompiledGrammar.from_rules(rules)
+        parser = GLLParser(grammar, disambig)
+        
+        result = parser.parse(self._name, raw)
+        if result is None:
+            raise ParseError(f"Failed to parse as {self._name}", 0, raw)
+        
+        # Extract tree and hydrate
+        tree = parser.extract_tree(result)
+        
+        # Find which alternative matched based on tree structure
+        matched_cls = self._find_matched_alternative(tree, raw)
+        if matched_cls is None:
+            matched_cls = self.alternatives[0]  # fallback
+        
+        return _hydrate_tree(tree, raw, matched_cls, grammar, rules)
+    
+    def _find_matched_alternative(self, tree: 'ParseTree', input_str: str) -> type['Rule'] | None:
+        """Determine which alternative in the union was matched."""
+        # Look at the tree label to determine which rule matched
+        for alt in self.alternatives:
+            if alt is None:
+                continue
+            if tree.label == alt.__name__:
+                return alt
+            # Check children
+            for child in tree.children:
+                if child.label == alt.__name__:
+                    return alt
+        return None
 
 
 def _auto_register_unions() -> None:
     """
-    Scan for unregistered RuleUnion objects in the caller's globals
+    Scan for unregistered RuleUnion objects in all captured scopes
     and register them with their variable names.
+    
+    This allows rules defined inside functions to be discovered.
     """
-    frame = inspect.currentframe()
-    try:
-        # Walk up to find the first frame outside grammar/easygrammar modules
-        caller = frame.f_back
-        while caller:
-            filename = caller.f_code.co_filename
-            if 'grammar.py' not in filename and 'easygrammar.py' not in filename:
-                break
-            caller = caller.f_back
-        
-        if not caller:
-            return
-        
-        # Check both globals and locals
-        all_vars = {**caller.f_globals, **caller.f_locals}
-        
-        for name, value in all_vars.items():
-            if isinstance(value, RuleUnion) and value._grammar is None:
-                source_file = value._source_file or caller.f_code.co_filename
-                source_line = value._source_line or 0
-                value._register_with_name(name, source_file, source_line)
-    finally:
-        del frame
+    # Collect all variables from captured locals and current call stack
+    all_vars = _get_all_captured_vars()
+    
+    for name, value in all_vars.items():
+        if isinstance(value, RuleUnion) and value._grammar is None:
+            source_file = value._source_file or ""
+            source_line = value._source_line or 0
+            value._register_with_name(name, source_file, source_line)
 
 
 class RuleMeta(ABCMeta):
     @overload
-    def __or__[T:Rule](cls: type[T], other:type[None]) -> RuleUnion: ...
+    def __or__[T: Rule](cls: type[T], other: type[None]) -> RuleUnion[T | None]: ...
     @overload
-    def __or__[T:Rule, U:Rule](cls: type[T], other: type[U]) -> RuleUnion: ...
+    def __or__[T: Rule, U: Rule](cls: type[T], other: type[U]) -> RuleUnion[T | U]: ...
+    @overload
+    def __or__[T: Rule, U](cls: type[T], other: RuleUnion[U]) -> RuleUnion[T | U]: ...
     def __or__(cls, other):
         if isinstance(other, RuleUnion):
             return RuleUnion([cls] + other.alternatives)
@@ -200,24 +345,121 @@ class RuleMeta(ABCMeta):
             return RuleUnion([cls, None])
         return RuleUnion([cls, other])
 
+    @overload
+    def __ror__[T: Rule, U: Rule](cls: type[T], other: type[U]) -> RuleUnion[U | T]: ...
+    @overload
+    def __ror__[T: Rule, U](cls: type[T], other: RuleUnion[U]) -> RuleUnion[U | T]: ...
     def __ror__(cls, other):
         if isinstance(other, RuleUnion):
             return RuleUnion(other.alternatives + [cls])
         return RuleUnion([other, cls])
+    
+    def __str__(cls) -> str:
+        """Return the grammar rule string representation."""
+        if hasattr(cls, '_grammar') and cls._grammar is not None:
+            return str(cls._grammar)
+        return cls.__name__
+    
+    def __repr__(cls) -> str:
+        """Return the grammar rule string representation."""
+        return cls.__str__()
 
     def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
-        # TODO: whole process of parsing the input string
-        # TODO: would it be possible to pass in a generic sequence (e.g. list[Token]), i.e. easy ability to separate scanner and parser?
-        # print(f"Custom call on classes: {cls.__name__} | {raw}")
+        """Parse input string and return a hydrated Rule instance."""
+        from .backend.gll import (
+            CompiledGrammar, GLLParser, DisambiguationRules, ParseTree, ParseError
+        )
+        from .grammar import get_all_rules, lookup_by_name
+        
+        # Get all registered rules (from the caller's file by default)
+        rules = get_all_rules()
+        
+        # Build disambiguation rules from class attributes if present
+        disambig = DisambiguationRules()
+        if hasattr(cls, 'precedence'):
+            # Convert class references to names
+            disambig.priority = [
+                r.__name__ if isinstance(r, type) else str(r) 
+                for r in cls.precedence
+            ]
+        if hasattr(cls, 'associativity'):
+            disambig.associativity = {
+                (r.__name__ if isinstance(r, type) else str(r)): assoc
+                for r, assoc in cls.associativity.items()
+            }
+        
+        # Compile grammar and parse
+        grammar = CompiledGrammar.from_rules(rules)
+        parser = GLLParser(grammar, disambig)
+        
+        result = parser.parse(cls.__name__, raw)
+        if result is None:
+            raise ParseError(f"Failed to parse as {cls.__name__}", 0, raw)
+        
+        # Extract parse tree with disambiguation
+        tree = parser.extract_tree(result)
+        
+        # Hydrate into Rule instance
+        return _hydrate_tree(tree, raw, cls, grammar, rules)
 
-        # create an instance of the class (without calling __init__)
-        obj = cls.__new__(cls, cls.__name__)
 
-        # define all of the members of the instance (based on the parse shape). e.g.
-        obj.a = 42  #DEBUG
-        obj.b = 43  #DEBUG
-
-        return obj
+def _hydrate_tree(
+    tree: 'ParseTree',
+    input_str: str,
+    target_cls: type,
+    grammar: 'CompiledGrammar',
+    rules: list,
+) -> object:
+    """
+    Hydrate a parse tree into a Rule instance.
+    Populates fields based on captures in the tree.
+    """
+    from .backend.gll import ParseTree
+    
+    # Create instance without calling __init__
+    instance = object.__new__(target_cls)
+    
+    # Get matched text
+    text = tree.get_text(input_str)
+    
+    # Find all captures
+    captures = tree.find_captures()
+    
+    # Build a map of rule names to classes
+    rule_classes: dict[str, type] = {}
+    for rule in rules:
+        # Try to find the class with this name in the caller's context
+        # This is a simplification - in practice we'd need better class resolution
+        rule_classes[rule.name] = target_cls  # placeholder
+    
+    # Populate captured fields
+    for name, capture_trees in captures.items():
+        if len(capture_trees) == 1:
+            capture_tree = capture_trees[0]
+            value = capture_tree.get_text(input_str)
+            setattr(instance, name, value)
+        else:
+            values = [ct.get_text(input_str) for ct in capture_trees]
+            setattr(instance, name, values)
+    
+    # Handle mixin types (Rule, int), (Rule, str), etc.
+    for base in target_cls.__mro__:
+        if base in (int, float, str, bool) and base is not object:
+            try:
+                converted = base(text)
+                # For mixin types, we want the instance to behave like the base type
+                # Store the converted value and override comparison
+                object.__setattr__(instance, '_mixin_value', converted)
+            except (ValueError, TypeError):
+                pass
+            break
+    
+    # Store the matched text and original input
+    object.__setattr__(instance, '_text', text)
+    object.__setattr__(instance, '_tree', tree)
+    object.__setattr__(instance, '_input_str', input_str)
+    
+    return instance
 
 
 # @dataclass_transform()
@@ -227,6 +469,54 @@ class Rule(ABC, metaclass=RuleMeta):
     @final
     def __init__(self, raw:str, /):
         ...
+    
+    def __eq__(self, other: object) -> bool:
+        """Compare with other values. Supports comparison with mixin base types."""
+        if hasattr(self, '_mixin_value'):
+            # For mixin types, compare the converted value
+            return self._mixin_value == other
+        if hasattr(self, '_text'):
+            # Compare by matched text
+            if isinstance(other, str):
+                return self._text == other
+            if isinstance(other, Rule) and hasattr(other, '_text'):
+                return self._text == other._text
+        return self is other
+    
+    def __hash__(self) -> int:
+        if hasattr(self, '_mixin_value'):
+            return hash(self._mixin_value)
+        if hasattr(self, '_text'):
+            return hash(self._text)
+        return id(self)
+    
+    def __str__(self) -> str:
+        if hasattr(self, '_text'):
+            return self._text
+        return super().__str__()
+    
+    def __repr__(self) -> str:
+        if hasattr(self, '_tree') and hasattr(self, '_input_str'):
+            return tree_string(self)
+        cls_name = self.__class__.__name__
+        if hasattr(self, '_text'):
+            return f"{cls_name}({self._text!r})"
+        return f"{cls_name}()"
+    
+    # Numeric operations for mixin types (int, float)
+    def __int__(self) -> int:
+        if hasattr(self, '_mixin_value') and isinstance(self._mixin_value, (int, float)):
+            return int(self._mixin_value)
+        if hasattr(self, '_text'):
+            return int(self._text)
+        raise TypeError(f"cannot convert {self.__class__.__name__} to int")
+    
+    def __float__(self) -> float:
+        if hasattr(self, '_mixin_value') and isinstance(self._mixin_value, (int, float)):
+            return float(self._mixin_value)
+        if hasattr(self, '_text'):
+            return float(self._text)
+        raise TypeError(f"cannot convert {self.__class__.__name__} to float")
 
     @staticmethod
     def _collect_sequence_for_class(target_cls: type) -> list:
@@ -309,6 +599,9 @@ class Rule(ABC, metaclass=RuleMeta):
         if cls.__init__ != Rule.__init__:
             raise ValueError(f"Rule subclass `{cls.__name__}` must not override __init__ in the base class.")
 
+        # Capture caller's locals so rules defined in functions can be found later
+        _capture_caller_locals()
+
         # capture the ordered sequence of class-body expressions and declarations
         sequence = Rule._collect_sequence_for_class(cls)
         setattr(cls, "_sequence", sequence)
@@ -326,67 +619,15 @@ class Rule(ABC, metaclass=RuleMeta):
         setattr(cls, "_grammar", grammar_rule)
 
 
-    # def __repr__(self) -> str:
-    #     dict_str = ", ".join([f"{k}=`{v}`" for k, v in self.__dict__.items()])
-    #     return f"{self.__class__.__name__}({dict_str})"
-
-
-# class Rule(RuleBase):
-#     def __init__(self, raw:str): ...
-
-
-
-# # class RuleFactoryMeta(ABCMeta): ...
-# class RuleFactory(ABC):#, metaclass=RuleFactoryMeta): ...
-#     @abstractmethod
-#     def __new__(cls, *args, **kwargs) -> type[Rule]: ...
-
-# class Repeat(RuleFactory):
-#     @overload
-#     def __new__(cls, *, exactly:int) -> type[Rule]: ...
-#     @overload
-#     def __new__(cls, *, at_least:int|None=None, at_most:int|None=None) -> type[Rule]: ...
-#     def __new__(cls, *, at_least:int|None=None, at_most:int|None=None, exactly:int|None=None) -> type[Rule]:
-#         if exactly is not None:
-#             if at_least is not None:
-#                 raise ValueError('`exactly` and `at_least` are mutually exclusive.')
-#             if at_most is not None:
-#                 raise ValueError('`exactly` and `at_most` are mutually exclusive.')
-#             at_least=exactly
-#             at_most=exactly
-#         else:
-#             if at_least is None:
-#                 at_least=0
-#             if at_most is None:
-#                 at_most=float('inf')
-
-#         pdb.set_trace()
-
-#         return Rule
-
-# Repeat()
-
-# class ClassA(Rule):
-#     '('
-#     a:int
-#     ')'
 
 # protocol for helper functions
 class HelperFunction(Protocol):
     def __call__(self, *args: Any, **kwargs: Any) -> type[Rule]: ...
 
 
-# class Infinity: ...
-# infinity = Infinity()
-
-# RuleLike: TypeAlias = type[Rule] | tuple['RuleLike', ...] | str
-
 # TODO: consider instead making these just classes that we call with arguments, since they aren't rules (char needs special handling though...)
-from typing import Literal
 class char(Rule):
-    def __class_getitem__(self, item: str): 
-        # TODO: save whatever was passed in? or are we just going to let the AST parser handle it?
-        ...
+    def __class_getitem__(self, item: str): ...
 class separator: 
     def __class_getitem__(self, item: str): ...
 class at_least: 
@@ -397,16 +638,13 @@ class exactly:
     def __class_getitem__(self, item: int): ...
 
 
-# class Char(Rule):
-#     # TODO: this might be shaped differently
-#     char: str
 
-class either(Rule):
+class either[*Ts](Rule):
     """
     Represents a choice between alternatives.
     Usage: either[A, B, C] or either[A | B | C]
     """
-    item: Any  # Type is determined by the alternatives
+    item: Union[*Ts]  # Type is determined by the alternatives
     
     def __class_getitem__(cls, items):
         # When either[A, B, C] is used, return a RuleUnion
@@ -439,199 +677,231 @@ class _ambiguous[T:Rule](Rule):
     alternatives: list[T]
 
 
-# def char(s:str) -> type[Char]:
-#     #TODO: whatever implementation needed...
-#     return Char
+def tree_string(node: Rule) -> str:
+    """
+    Generate a tree-formatted string representation of a parsed Rule.
+    
+    Args:
+        node: A hydrated Rule instance from parsing
+    
+    Returns:
+        A string showing the parse tree with box-drawing characters
+    
+    Example:
+        >>> result = Expr("(1+2)*3")
+        >>> print(tree_string(result))
+        Mul
+        ├── left: Paren
+        │   └── inner: Add
+        │       ├── left: Num
+        │       │   └── 1
+        │       └── right: Num
+        │           └── 2
+        └── right: Num
+            └── 3
+    """
+    from .backend.gll import ParseTree
+    
+    if not hasattr(node, '_tree') or not hasattr(node, '_input_str'):
+        return f"{node.__class__.__name__}: {node}"
+    
+    tree: ParseTree = node._tree
+    input_str: str = node._input_str
+    
+    # Build a map of rule names to their field sequences
+    # This helps us infer field names from child order
+    rule_fields: dict[str, list[str]] = {}
+    
+    def get_rule_fields(rule_name: str) -> list[str]:
+        """Get the field names for a rule in order."""
+        if rule_name in rule_fields:
+            return rule_fields[rule_name]
+        
+        # Try to find the rule class
+        all_vars = _get_all_captured_vars()
+        for name, value in all_vars.items():
+            if isinstance(value, type) and issubclass(value, Rule) and value.__name__ == rule_name:
+                # Get the _sequence attribute
+                if hasattr(value, '_sequence'):
+                    fields = []
+                    for item in value._sequence:
+                        if item[0] == 'decl' and item[1]:  # Named field
+                            fields.append(item[1])
+                    rule_fields[rule_name] = fields
+                    return fields
+        
+        rule_fields[rule_name] = []
+        return []
+    
+    # Collect user-defined rule names by looking at the parse tree
+    rule_names: set[str] = set()
+    union_names: set[str] = set()
+    
+    def is_user_rule_name(label: str) -> bool:
+        """Check if a label is a user-defined rule name (not internal GLL label)."""
+        if not label or label.startswith(':') or label.startswith('_'):
+            return False
+        if any(c in label for c in '+-*[](){}|"\''):
+            return False
+        if not label[0].isupper():
+            return False
+        return label.isidentifier()
+    
+    def collect_rule_names(t: ParseTree) -> None:
+        if is_user_rule_name(t.label):
+            rule_names.add(t.label)
+        for c in t.children:
+            collect_rule_names(c)
+    collect_rule_names(tree)
+    
+    # Identify union names by checking if the rule has field definitions
+    # Rules with fields are meaningful (Add, Mul, Paren, Num)
+    # Rules without fields that just wrap other rules are unions (Expr)
+    def is_union_rule(rule_name: str) -> bool:
+        """Check if a rule is a union (no fields, just wraps other rules)."""
+        all_vars = _get_all_captured_vars()
+        for name, value in all_vars.items():
+            if isinstance(value, type) and issubclass(value, Rule) and value.__name__ == rule_name:
+                # Check if it has any field declarations
+                if hasattr(value, '_sequence'):
+                    for item in value._sequence:
+                        if item[0] == 'decl' and item[1]:  # Has a named field
+                            return False
+                return False  # It's a Rule class with definition, not a union
+            elif isinstance(value, RuleUnion) and value._name == rule_name:
+                return True  # It's a RuleUnion
+        # Assume unknown rules might be unions if they only contain one child rule
+        return True
+    
+    # Mark all RuleUnion names as unions
+    all_vars = _get_all_captured_vars()
+    for name, value in all_vars.items():
+        if isinstance(value, RuleUnion) and value._name:
+            union_names.add(value._name)
+    
+    # Also detect from the tree: rules that only wrap other rules without adding structure
+    def analyze_unions(t: ParseTree) -> None:
+        if is_user_rule_name(t.label) and t.label not in union_names:
+            if is_union_rule(t.label):
+                union_names.add(t.label)
+        for c in t.children:
+            analyze_unions(c)
+    analyze_unions(tree)
+    
+    # Structured tree node
+    class TreeNode:
+        def __init__(self, rule_name: str, text: str):
+            self.rule_name = rule_name
+            self.text = text
+            self.children: list[tuple[str | None, TreeNode]] = []
+    
+    def is_meaningful_rule(label: str) -> bool:
+        return is_user_rule_name(label) and label not in union_names
+    
+    def extract_structure(t: ParseTree, parent_rule: str | None = None, field_index: list[int] | None = None) -> TreeNode | None:
+        """Extract meaningful structure from parse tree."""
+        if is_meaningful_rule(t.label):
+            node = TreeNode(t.label, t.get_text(input_str))
+            find_children(t, node, t.label)
+            return node
+        
+        if t.label in union_names:
+            for c in t.children:
+                result = extract_structure(c, parent_rule, field_index)
+                if result:
+                    return result
+        
+        for c in t.children:
+            result = extract_structure(c, parent_rule, field_index)
+            if result:
+                return result
+        return None
+    
+    def find_children(t: ParseTree, parent: TreeNode, parent_rule: str) -> None:
+        """Find children, inferring field names from rule definition."""
+        fields = get_rule_fields(parent_rule)
+        rule_child_index = 0
+        
+        def process_subtree(pt: ParseTree) -> None:
+            nonlocal rule_child_index
+            
+            if pt.label.startswith(':'):
+                # Explicit capture
+                capture_name = pt.label[1:]
+                rule_node = find_rule_in_tree(pt)
+                if rule_node:
+                    parent.children.append((capture_name, rule_node))
+                else:
+                    leaf = TreeNode("", pt.get_text(input_str))
+                    parent.children.append((capture_name, leaf))
+            elif is_meaningful_rule(pt.label):
+                # Infer field name from position
+                field_name = None
+                if rule_child_index < len(fields):
+                    field_name = fields[rule_child_index]
+                rule_child_index += 1
+                
+                rule_node = extract_structure(pt)
+                if rule_node:
+                    parent.children.append((field_name, rule_node))
+            elif pt.label in union_names:
+                # Union passthrough - process contents
+                for c in pt.children:
+                    process_subtree(c)
+            else:
+                # Continue searching
+                for c in pt.children:
+                    process_subtree(c)
+        
+        for child in t.children:
+            process_subtree(child)
+    
+    def find_rule_in_tree(t: ParseTree) -> TreeNode | None:
+        """Find a meaningful rule in a tree."""
+        if is_meaningful_rule(t.label):
+            node = TreeNode(t.label, t.get_text(input_str))
+            find_children(t, node, t.label)
+            return node
+        if t.label in union_names:
+            for c in t.children:
+                result = find_rule_in_tree(c)
+                if result:
+                    return result
+        for c in t.children:
+            result = find_rule_in_tree(c)
+            if result:
+                return result
+        return None
+    
+    root = extract_structure(tree)
+    if not root:
+        return f"{node.__class__.__name__}: {node}"
+    
+    lines: list[str] = []
+    
+    def render(n: TreeNode, prefix: str, connector: str, child_prefix: str, label: str | None) -> None:
+        if n.rule_name:
+            if label:
+                lines.append(f"{prefix}{connector}{label}: {n.rule_name}")
+            else:
+                lines.append(f"{prefix}{connector}{n.rule_name}")
+            
+            if n.children:
+                for i, (child_label, child_node) in enumerate(n.children):
+                    is_last = (i == len(n.children) - 1)
+                    if is_last:
+                        render(child_node, child_prefix, "└── ", child_prefix + "    ", child_label)
+                    else:
+                        render(child_node, child_prefix, "├── ", child_prefix + "│   ", child_label)
+            else:
+                lines.append(f"{child_prefix}└── {n.text}")
+        else:
+            if label:
+                lines.append(f"{prefix}{connector}{label}: {n.text}")
+            else:
+                lines.append(f"{prefix}{connector}{n.text}")
+    
+    render(root, "", "", "", None)
+    
+    return "\n".join(lines)
 
-# def either[T:Rule](*args:type[T]) -> type[Either[T]]:
-#     #TODO: whatever implementation needed...
-#     return Either[T]
-
-# @overload
-# def repeat[T:Rule](arg:type[T],  /, *, separator:str='', exactly:int) -> type[Repeat[T]]: ...
-# @overload
-# def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity) -> type[Repeat[T]]: ...
-# def repeat[T:Rule](arg:type[T],  /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity, exactly:int|None=None) -> type[Repeat[T]]:
-#     #TODO: whatever implementation needed...
-#     return Repeat[T]
-
-
-# def optional[T:Rule](arg:type[T]) -> type[Optional[T]]:
-#     #TODO: whatever implementation needed...
-#     return Optional[T]
-
-# @overload
-# def sequence[A:Rule](a:type[A], /) -> type[Sequence[A]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule](a:type[A], b:type[B], /) -> type[Sequence[A, B]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule](a:type[A], b:type[B], c:type[C], /) -> type[Sequence[A, B, C]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule](a:type[A], b:type[B], c:type[C], d:type[D], /) -> type[Sequence[A, B, C, D]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], /) -> type[Sequence[A, B, C, D, E]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], /) -> type[Sequence[A, B, C, D, E, F]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], /) -> type[Sequence[A, B, C, D, E, F, G]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], /) -> type[Sequence[A, B, C, D, E, F, G, H]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], /) -> type[Sequence[A, B, C, D, E, F, G, H, I]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule, Y:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], y:type[Y], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]]: ...
-# @overload
-# def sequence[A:Rule, B:Rule, C:Rule, D:Rule, E:Rule, F:Rule, G:Rule, H:Rule, I:Rule, J:Rule, K:Rule, L:Rule, M:Rule, N:Rule, O:Rule, P:Rule, Q:Rule, R:Rule, S:Rule, T:Rule, U:Rule, V:Rule, W:Rule, X:Rule, Y:Rule, Z:Rule](a:type[A], b:type[B], c:type[C], d:type[D], e:type[E], f:type[F], g:type[G], h:type[H], i:type[I], j:type[J], k:type[K], l:type[L], m:type[M], n:type[N], o:type[O], p:type[P], q:type[Q], r:type[R], s:type[S], t:type[T], u:type[U], v:type[V], w:type[W], x:type[X], y:type[Y], z:type[Z], /) -> type[Sequence[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]]: ...
-# @overload
-# def sequence[T:Rule](*args:type[T]) -> type[Sequence[*tuple[T, ...]]]: ... # give up and just say it's a tuple of unions of all the possible args
-# def sequence(*args):
-#     #TODO: whatever implementation needed...
-#     return Sequence#[*tuple[T, ...]]
-
-# def test():
-#     class A(Rule):
-#         'a'
-#     class B(Rule):
-#         'b'
-#     class C(Rule):
-#         'c'
-#     class D(Rule):
-#         'd'
-#     a = repeat(A, separator='.', at_least=1)
-#     b = a('aaaa')
-#     c = b.items[0]
-#     r = sequence(A,B,D,D)
-#     r('').items
-#     rule1 = either(A, repeat(B, exactly=5, separator='.'), optional(B))
-#     rule1('b.b.b.b.b').item
-
-#     rule2 = sequence(A, B, repeat(B), repeat(sequence(A, B)), A)
-#     rule2('abbbbbbababababa').items[2].items[1]
-
-
-
-#     rule3 = either(A, B, C)
-#     apple = rule3('a').item
-#     if isinstance(apple, A):
-#         apple
-#     elif isinstance(apple, B):
-#         apple
-#     elif isinstance(apple, C):
-#         apple
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# T = TypeVar('T', bound=RuleLike)
-# Ts = TypeVarTuple('Ts')#, bound=RuleLike) # TODO: some way of setting bounds on the Ts. perhaps runtime validation
-# class Repeat(Rule, Generic[T]):
-#     items: list[T]
-# class Either(Rule, Generic[Unpack[Ts]]):
-#     item: Unpack[Ts]
-# class Optional(Rule, Generic[T]):
-#     item: T|None
-# class Sequence(Rule, Generic[Unpack[Ts]]):
-#     items: tuple[Unpack[Ts]]
-# class Char(Rule): ...
-
-
-
-# def repeat(rule:type[T], /, *, separator:str='', at_least:int=0, at_most:int|Infinity=infinity, exactly:int=None) -> type[Repeat[T]]:
-#     # TODO: whatever representation for a repeat rule...
-#     ...
-
-#     return Repeat[T]
-
-
-# apple = repeat('a', exactly=4)
-# apple('aaaa').items
-
-
-# def either(*rules:Unpack[Ts]) -> type[Either[Ts]]:
-#     # TODO
-#     ...
-#     return Either[Ts]
-# class A(Rule): ...
-# class B(Rule): ...
-# apple = either(A, B)('a')
-# apple.item
-
-# def optional(rule:type[T]) -> type[Optional[T]]:
-#     # TODO
-#     ...
-#     return Optional[T]
-
-# def sequence(*rules:Unpack[Ts]) -> type[Sequence[Ts]]:
-#     # TODO
-#     ...
-#     return Sequence[Ts]
-
-# def char(pattern:str, /) -> type[Rule]:
-#     # TODO
-#     ...
-#     return Char

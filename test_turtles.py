@@ -25,7 +25,7 @@ class Build(Rule):
     ids: repeat[Id, separator['.'], at_least[1]]
 
 class NumId(Rule):
-    id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
+    id: '0' | sequence[char['1-9'], repeat[char['0-9']]]
 
 class Id(Rule):
     id: repeat[char['a-zA-Z0-9-'], at_least[1]]
@@ -66,7 +66,26 @@ AST = Add | Mul | Pow | Group | Id | Num
 # Alternative: AST = either[Add, Mul, Pow, Group, Id, Num]
 
 
+
+class stuff(Rule):
+    "a"
+    "b"
+    "c"
+    d: int
+
+class Something2(Rule):
+    'a'
+    stuff
+    t2: stuff
+    stuff
+    'b'
+    'c'
+
+
+
+
 print("=== Pretty-printed grammars ===\n")
 for rule in get_all_rules():
     print(rule)
     print()
+

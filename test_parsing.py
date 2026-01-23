@@ -13,10 +13,7 @@ def test_hello():
         "!"
 
     result = MyParser('Hello, World!')
-    assert result.name == 'World'  
-    #TODO: overload so all rules are str by default. mixins are for converting to other types
-    #      or perhaps __eq__ converts to a string? or __eq__ converts to string by default else mixin? tbd
-    #      or perhaps __eq__ looks at the type of other and sees if it can convert the parse to that type for a few cases (str, Rule[...], etc.)
+    assert result.name == 'World'
 
 
 def test_semver():
@@ -37,6 +34,8 @@ def test_semver():
         "+"
         ids: repeat[Id, separator['.'], at_least[1]]
 
+    # Note about mixins: basically it is just a post process step that converts the parsed string to that type. `int` can just take the value directly, though other types (e.g. bool) would need a dedicated parse function.
+    #      then the converted value exists in parallel to the rule dataclass object. E.g. NumId behaves like NumId & int
     class NumId(Rule, int):
         id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
 
@@ -78,11 +77,13 @@ def test_expressions():
 
     AST = Add | Mul | Pow | Group | Id | Num
     # TODO: need a way to specify precedence and associativity in the DSL
-    # perhaps something like this
+    """
+    perhaps something like this (but open to alternatives)
     AST.precedence = [Pow, Mul, Add] 
     Add.associativity = 'left'  # perhaps actually associativity is specified as tags in the rule class?
     Mul.associativity = 'left'
     Pow.associativity = 'right'
+    """
 
     result = AST('1+2*3^4')
     assert isinstance(result, Add)
@@ -100,10 +101,34 @@ def test_expressions():
     result.left
 
 
-# possible example of a minimal parser without needing to make a class
-word_parser = repeat[char['a-zA-Z-'], at_least[1]]
-result = word_parser('apple')
 
-# TBD exactly how comparing would work, but I want it to be flexible/convenient for the user
-assert result.items == ['a', 'p', 'p', 'l', 'e']
-assert result == 'apple'
+# def test_expressions2():
+
+# Expression parsing with left recursion
+class Num(Rule):
+    num: repeat[char['0-9'], at_least[1]]
+class Add(Rule):
+    left: Expr
+    char['+-']
+    right: Expr
+Expr = Add | Num
+Expr.precedence = [Add]
+Expr.associativity = {Add: 'left'}
+result = Expr("1+2")  # Returns Add instance
+print(result)
+
+
+# # possible example of a minimal parser without needing to make a class
+# word_parser = repeat[char['a-zA-Z'], at_least[1]]
+# result = word_parser('apple')
+
+# # TBD exactly how comparing would work, but I want it to be flexible/convenient for the user
+# assert result.items == ['a', 'p', 'p', 'l', 'e']
+# assert result == 'apple'
+
+
+# if __name__ == "__main__":
+#     # test_hello()
+#     # test_semver()
+#     # test_expressions()
+#     test_expressions2()
