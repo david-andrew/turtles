@@ -1,6 +1,8 @@
 # Turtles
 Parsing made easy in python. Also serves as a more human readable replacement for regex.
 
+> NOTE: implementation is work in progress. many features are buggy or incomplete.
+
 ## Frontend
 Parser grammars are defined analogously to dataclasses, and then the parse result is returned in the same structure.
 
@@ -34,7 +36,8 @@ todo: explain more...
 - combining rules `A | B`, nesting, recursion, etc.
 - helper functions `sequence`, `repeat`, `char`, `optional`, `either`
 
-Example of grammar for parsing semantic versions:
+## Examples
+### Semantic Versions:
 ```python
 from turtles import Rule, repeat, char, separator, at_least
 
@@ -73,7 +76,7 @@ result.build # Build(ids=['3', '14'])
 ```
 
 
-Toy JSON parser
+### Toy JSON parser
 ```python
 class JNull(Rule):
     "null"
@@ -112,11 +115,19 @@ print(repr(result)) # print out the parse result displaying the tree structure
 assert isinstance(result, JObject)
 assert len(result.pairs) == 3
 assert result.pairs[0].key == '"A"'
+assert isinstance(result.paris[1].value, JArray)
 # etc. etc.
 ```
+> NOTE: missing a lot of features from a full json grammar:
+> - whitespace between elements and around the top level item
+> - doesn't support float or scientific notation numbers
+> - supports invalid integer numbers with leading zeros
+> - doesn't support sign prefix (`+`/`-`) for numbers 
+> - strings don't support escapes, nor the vast majority of valid unicode characters
+
 
 ## Backend
-WIP. goal is to support multiple parser backends. probably start with `lark`. Also probably include a pure python GLL backend
+WIP. The primary backend is a simple GLL parser implementation, and the library manages generating the grammer, posing it as a GLL parse task, and then converting the result back to the user defined dataclass-esque objects. Eventually this library aims to support multiple other parser backends e.g. lark, tree-sitter, etc.
 
 ## Looking for the old Turtles?
 ⚠️ The turtles project has been rebooted. `v2.0.0` and onward will not be compatible with the original `v1.0.0` release. If you are looking for the original project, see [Roguelazer/turtles](https://github.com/Roguelazer/turtles). 
