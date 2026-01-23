@@ -167,11 +167,18 @@ class DisambiguationRules:
     associativity: dict[str, Associativity] = field(default_factory=dict)
     
     def get_priority(self, rule_name: str) -> int:
-        """Return priority (lower = higher precedence). Default is very low priority."""
+        """
+        Return priority score for disambiguation.
+        Higher precedence operators should be NESTED (not at top level).
+        So we invert: lower score = preferred at current level = LOWER precedence.
+        """
         try:
-            return self.priority.index(rule_name)
+            idx = self.priority.index(rule_name)
+            # Invert: higher index in priority list = lower precedence = lower score = preferred at top
+            return -idx
         except ValueError:
-            return len(self.priority) + 1000
+            # Unknown rules get very negative score (preferred at top over known operators)
+            return -(len(self.priority) + 1000)
     
     def get_associativity(self, rule_name: str) -> Associativity:
         """Return associativity for a rule. Default is 'none'."""
@@ -182,30 +189,125 @@ class DisambiguationRules:
 # Character Class Matching
 # =============================================================================
 
-def compile_char_class(pattern: str) -> Callable[[str], bool]:
+def _parse_escape_sequence(pattern: str, i: int) -> tuple[str, int]:
     """
-    Compile a character class pattern like 'a-zA-Z0-9_' into a matcher function.
-    Supports ranges (a-z) and individual characters.
+    Parse an escape sequence starting at position i (after the backslash).
+    Returns (character, new_position).
     """
-    chars: set[str] = set()
-    i = 0
-    while i < len(pattern):
-        if i + 2 < len(pattern) and pattern[i + 1] == '-':
-            # Range: a-z
-            start, end = pattern[i], pattern[i + 2]
-            for c in range(ord(start), ord(end) + 1):
-                chars.add(chr(c))
-            i += 3
-        else:
-            # Single character (may be escaped)
-            if pattern[i] == '\\' and i + 1 < len(pattern):
-                chars.add(pattern[i + 1])
-                i += 2
-            else:
-                chars.add(pattern[i])
-                i += 1
+    if i >= len(pattern):
+        return '\\', i
     
-    return lambda c: c in chars
+    ch = pattern[i]
+    
+    # Simple escape sequences
+    simple_escapes = {
+        'n': '\n', 'r': '\r', 't': '\t', 'b': '\b', 'f': '\f',
+        '\\': '\\', '-': '-', ']': ']', '^': '^',
+    }
+    if ch in simple_escapes:
+        return simple_escapes[ch], i + 1
+    
+    # \xHH - 2 hex digits
+    if ch == 'x' and i + 2 < len(pattern):
+        try:
+            code = int(pattern[i + 1:i + 3], 16)
+            return chr(code), i + 3
+        except ValueError:
+            pass
+    
+    # \uHHHH - 4 hex digits
+    if ch == 'u' and i + 4 < len(pattern):
+        try:
+            code = int(pattern[i + 1:i + 5], 16)
+            return chr(code), i + 5
+        except ValueError:
+            pass
+    
+    # \UHHHHHHHH - 8 hex digits
+    if ch == 'U' and i + 8 < len(pattern):
+        try:
+            code = int(pattern[i + 1:i + 9], 16)
+            return chr(code), i + 9
+        except ValueError:
+            pass
+    
+    # Unknown escape - return the character literally
+    return ch, i + 1
+
+
+def compile_char_class(pattern: str) -> Callable[[str], bool]:
+    r"""
+    Compile a character class pattern like 'a-zA-Z0-9_' into a matcher function.
+    
+    Supports:
+    - Ranges: a-z, 0-9, \x20-\x7E
+    - Individual characters: abc
+    - Escape sequences: \\, \-, \n, \r, \t, \xHH, \uHHHH, \UHHHHHHHH
+    - Literal dash at start/end: -a-z or a-z-
+    
+    Uses range-based matching (not character enumeration) for efficiency with
+    large Unicode ranges.
+    """
+    ranges: list[tuple[int, int]] = []  # (start_ord, end_ord) inclusive
+    i = 0
+    n = len(pattern)
+    
+    def parse_char(pos: int) -> tuple[str, int]:
+        """Parse a single character or escape sequence at position pos."""
+        if pos >= n:
+            return '', pos
+        if pattern[pos] == '\\':
+            return _parse_escape_sequence(pattern, pos + 1)
+        return pattern[pos], pos + 1
+    
+    while i < n:
+        # Parse the first character
+        ch, next_i = parse_char(i)
+        if not ch:
+            break
+        
+        # Check if this could be the start of a range
+        # A dash is a range operator if:
+        # - It's not at the start (i > 0)
+        # - It's not at the end (there's a character after)
+        # - It's not escaped (handled by parse_char)
+        if next_i < n and pattern[next_i] == '-' and next_i + 1 < n:
+            # Peek at what comes after the dash
+            end_ch, end_next_i = parse_char(next_i + 1)
+            if end_ch:
+                # This is a range: ch-end_ch
+                ranges.append((ord(ch), ord(end_ch)))
+                i = end_next_i
+                continue
+        
+        # Single character - add as a range of length 1
+        ranges.append((ord(ch), ord(ch)))
+        i = next_i
+    
+    # Optimize: merge adjacent/overlapping ranges
+    if ranges:
+        ranges.sort()
+        merged: list[tuple[int, int]] = [ranges[0]]
+        for start, end in ranges[1:]:
+            prev_start, prev_end = merged[-1]
+            if start <= prev_end + 1:
+                # Overlapping or adjacent - merge
+                merged[-1] = (prev_start, max(prev_end, end))
+            else:
+                merged.append((start, end))
+        ranges = merged
+    
+    # Create matcher function
+    def matcher(c: str) -> bool:
+        if not c:
+            return False
+        code = ord(c)
+        for start, end in ranges:
+            if start <= code <= end:
+                return True
+        return False
+    
+    return matcher
 
 
 # =============================================================================
@@ -326,6 +428,10 @@ class GLLParser:
         self.gss_edges.clear()
         self.sppf_nodes.clear()
         self._pending_continuations: dict[tuple, list] = {}
+        # Repeat continuation state: slot_name -> (element, separator, at_least, at_most, 
+        #                                           items_parsed, capture_name, original_desc)
+        self._repeat_state: dict[str, tuple] = {}
+        self._repeat_counter = 0
     
     def _slot_key(self, slot: GrammarSlot) -> str:
         """Create a hashable key for a slot."""
@@ -360,10 +466,11 @@ class GLLParser:
     
     def _add(self, desc: Descriptor) -> None:
         """Add a descriptor to the worklist if not already processed."""
-        # U set key: (slot_key, gss_key, input_position)
-        # gss_key identifies the GSS node by its slot and creation position
+        # U set key: (slot_key, gss_key, input_position, sppf_key)
+        # Include SPPF to ensure different parse paths are all explored
         gss_key = (self._slot_key(desc.gss.slot) if desc.gss.slot else None, desc.gss.pos)
-        u_key = (self._slot_key(desc.slot), gss_key, desc.pos)
+        sppf_key = (desc.sppf.label, desc.sppf.start, desc.sppf.end) if desc.sppf else None
+        u_key = (self._slot_key(desc.slot), gss_key, desc.pos, sppf_key)
         if u_key not in self.U:
             self.U.add(u_key)
             self.R.append(desc)
@@ -530,6 +637,79 @@ class GLLParser:
                     )
             return
         
+        # Handle repeat-separator continuation (separator was parsed, now parse element)
+        # Check this BEFORE _repeat_ since _repeat_sep_ starts with _repeat_
+        if slot.rule_name.startswith("_repeat_sep_"):
+            state = self._repeat_state.get(slot.rule_name)
+            if state:
+                rep_element, separator, at_least, at_most, items_parsed, capture_name, orig_desc, accumulated_sppf = state
+                # Separator was parsed successfully, now parse the element
+                # Use the stored accumulated SPPF, not current_sppf (which includes separator)
+                self._parse_repeat_element(
+                    rep_element, separator, at_least, at_most,
+                    items_parsed, accumulated_sppf, capture_name, orig_desc, pos
+                )
+            return
+        
+        # Handle repeat continuation slots (element was parsed)
+        if slot.rule_name.startswith("_repeat_"):
+            state = self._repeat_state.get(slot.rule_name)
+            if state:
+                rep_element, separator, at_least, at_most, items_parsed, capture_name, orig_desc = state
+                # The current_sppf is the result of parsing one item
+                # Accumulate it and continue the repeat
+                items_parsed += 1
+                
+                # If we have enough items, we can stop here (emit a valid parse path)
+                if items_parsed >= at_least:
+                    if capture_name:
+                        final_sppf = self._get_or_create_sppf(f":{capture_name}",
+                            current_sppf.start if current_sppf else pos, pos)
+                        if current_sppf:
+                            final_sppf.families = current_sppf.families[:]
+                    else:
+                        final_sppf = current_sppf
+                    combined = self._combine_sppf(orig_desc.sppf, final_sppf)
+                    next_slot = self._next_slot(orig_desc.slot)
+                    if next_slot:
+                        self._add(Descriptor(next_slot, orig_desc.gss, pos, combined))
+                
+                # Try to parse more items if we haven't hit maximum
+                if at_most is None or items_parsed < at_most:
+                    if separator:
+                        if self._is_simple_separator(separator):
+                            # Simple separator - match synchronously
+                            sep_pos = self._match_separator(separator, pos)
+                            if sep_pos is not None:
+                                self._parse_repeat_element(
+                                    rep_element, separator, at_least, at_most,
+                                    items_parsed, current_sppf, capture_name, orig_desc, sep_pos
+                                )
+                        elif isinstance(separator, GrammarRef):
+                            # Complex separator - parse asynchronously
+                            sep_rule = self.grammar.rules.get(separator.name)
+                            if sep_rule:
+                                called_slots = self.grammar.slots.get(separator.name, [])
+                                if called_slots:
+                                    first_slot = called_slots[0]
+                                    self._repeat_counter += 1
+                                    cont_name = f"_repeat_sep_{self._repeat_counter}"
+                                    cont_slot = GrammarSlot(cont_name, separator, 0, 1)
+                                    # Store state for after separator is parsed, including accumulated SPPF
+                                    self._repeat_state[cont_name] = (
+                                        rep_element, separator, at_least, at_most,
+                                        items_parsed, capture_name, orig_desc, current_sppf  # Include accumulated SPPF
+                                    )
+                                    new_gss = self._create(cont_slot, orig_desc.gss, pos, None)  # Don't pass SPPF through edge
+                                    self._add(Descriptor(first_slot, new_gss, pos, None))
+                    else:
+                        # No separator needed
+                        self._parse_repeat_element(
+                            rep_element, separator, at_least, at_most,
+                            items_parsed, current_sppf, capture_name, orig_desc, pos
+                        )
+            return
+        
         # If we're at the end of a rule (past last element)
         if slot.pos >= slot.total:
             # Create result SPPF for this rule
@@ -660,10 +840,37 @@ class GLLParser:
             capture_name=capture_name,
         )
     
+    def _match_separator(self, separator: GrammarElement, pos: int) -> int | None:
+        """
+        Try to match a simple separator at the given position.
+        Returns the new position after the separator, or None if no match.
+        Only handles GrammarLiteral and GrammarCharClass. 
+        For GrammarRef separators, returns None (requires async handling).
+        """
+        if isinstance(separator, GrammarLiteral):
+            sep_end = pos + len(separator.value)
+            if sep_end <= self.input_len and self.input[pos:sep_end] == separator.value:
+                return sep_end
+            return None
+        elif isinstance(separator, GrammarCharClass):
+            if pos >= self.input_len:
+                return None
+            char = self.input[pos]
+            matcher = self.grammar.char_matchers.get(separator.pattern)
+            if matcher and matcher(char):
+                return pos + 1
+            return None
+        # GrammarRef and complex separators require async handling
+        return None
+    
+    def _is_simple_separator(self, separator: GrammarElement) -> bool:
+        """Check if separator can be matched synchronously."""
+        return isinstance(separator, (GrammarLiteral, GrammarCharClass))
+    
     def _parse_repeat_items(
         self,
         element: GrammarElement,
-        separator: str | None,
+        separator: GrammarElement | None,
         at_least: int,
         at_most: int | None,
         desc: Descriptor,
@@ -708,11 +915,32 @@ class GLLParser:
         # Try to parse one more item
         # If not first item and separator exists, match separator first
         if items_parsed > 0 and separator:
-            sep_end = pos + len(separator)
-            if sep_end <= self.input_len and self.input[pos:sep_end] == separator:
-                pos = sep_end
+            if self._is_simple_separator(separator):
+                sep_pos = self._match_separator(separator, pos)
+                if sep_pos is not None:
+                    pos = sep_pos
+                else:
+                    return  # Can't continue without separator
+            elif isinstance(separator, GrammarRef):
+                # Complex separator - parse asynchronously
+                sep_rule = self.grammar.rules.get(separator.name)
+                if sep_rule:
+                    called_slots = self.grammar.slots.get(separator.name, [])
+                    if called_slots:
+                        first_slot = called_slots[0]
+                        self._repeat_counter += 1
+                        cont_name = f"_repeat_sep_{self._repeat_counter}"
+                        cont_slot = GrammarSlot(cont_name, separator, 0, 1)
+                        # Store state for after separator is parsed, including accumulated SPPF
+                        self._repeat_state[cont_name] = (
+                            element, separator, at_least, at_most,
+                            items_parsed, capture_name, desc, accumulated_sppf  # Include accumulated SPPF
+                        )
+                        new_gss = self._create(cont_slot, desc.gss, pos, None)  # Don't pass SPPF through edge
+                        self._add(Descriptor(first_slot, new_gss, pos, None))
+                return  # Separator parsing is async, we'll continue when it returns
             else:
-                return  # Can't continue without separator
+                return  # Unsupported separator type
         
         # Try to match the repeated element
         if isinstance(element, (GrammarLiteral, GrammarCharClass)):
@@ -732,13 +960,110 @@ class GLLParser:
             if rule:
                 called_slots = self.grammar.slots.get(element.name, [])
                 if called_slots:
-                    # This is complex - we need to create a continuation
-                    # For now, use a simplified approach
                     first_slot = called_slots[0]
-                    # Create a synthetic continuation
-                    next_slot = self._next_slot(desc.slot)
-                    if next_slot:
-                        new_gss = self._create(next_slot, desc.gss, pos, desc.sppf)
+                    # Create a repeat continuation slot
+                    self._repeat_counter += 1
+                    cont_name = f"_repeat_{self._repeat_counter}"
+                    cont_slot = GrammarSlot(cont_name, element, 0, 1)
+                    # Store repeat state for when we return
+                    self._repeat_state[cont_name] = (
+                        element, separator, at_least, at_most,
+                        items_parsed, capture_name, desc
+                    )
+                    # Create GSS edge to continue at repeat continuation
+                    new_gss = self._create(cont_slot, desc.gss, pos, desc.sppf)
+                    self._add(Descriptor(first_slot, new_gss, pos, None))
+        
+        elif isinstance(element, GrammarChoice):
+            # Handle choice within repeat - try each alternative
+            self._parse_repeat_choice(
+                element, separator, at_least, at_most, desc,
+                items_parsed, accumulated_sppf, capture_name, pos
+            )
+    
+    def _parse_repeat_element(
+        self,
+        element: GrammarElement,
+        separator: GrammarElement | None,
+        at_least: int,
+        at_most: int | None,
+        items_parsed: int,
+        accumulated_sppf: SPPFNode | None,
+        capture_name: str | None,
+        orig_desc: Descriptor,
+        pos: int,
+    ) -> None:
+        """Parse a single repeat element (separator already matched if needed)."""
+        if isinstance(element, (GrammarLiteral, GrammarCharClass)):
+            result = self._match_terminal(element, pos)
+            if result:
+                new_pos, item_sppf = result
+                new_acc = self._combine_sppf(accumulated_sppf, item_sppf)
+                # Continue parsing more items
+                new_desc = Descriptor(orig_desc.slot, orig_desc.gss, new_pos, orig_desc.sppf)
+                self._parse_repeat_items(
+                    element, separator, at_least, at_most, new_desc,
+                    items_parsed + 1, new_acc, capture_name,
+                )
+        elif isinstance(element, GrammarRef):
+            rule = self.grammar.rules.get(element.name)
+            if rule:
+                called_slots = self.grammar.slots.get(element.name, [])
+                if called_slots:
+                    first_slot = called_slots[0]
+                    self._repeat_counter += 1
+                    cont_name = f"_repeat_{self._repeat_counter}"
+                    cont_slot = GrammarSlot(cont_name, element, 0, 1)
+                    self._repeat_state[cont_name] = (
+                        element, separator, at_least, at_most,
+                        items_parsed, capture_name, orig_desc
+                    )
+                    new_gss = self._create(cont_slot, orig_desc.gss, pos, orig_desc.sppf)
+                    self._add(Descriptor(first_slot, new_gss, pos, None))
+        elif isinstance(element, GrammarChoice):
+            self._parse_repeat_choice(
+                element, separator, at_least, at_most, orig_desc,
+                items_parsed, accumulated_sppf, capture_name, pos
+            )
+    
+    def _parse_repeat_choice(
+        self,
+        choice: GrammarChoice,
+        separator: GrammarElement | None,
+        at_least: int,
+        at_most: int | None,
+        desc: Descriptor,
+        items_parsed: int,
+        accumulated_sppf: SPPFNode | None,
+        capture_name: str | None,
+        pos: int,
+    ) -> None:
+        """Parse a choice element within a repeat."""
+        for alt in choice.alternatives:
+            if isinstance(alt, (GrammarLiteral, GrammarCharClass)):
+                result = self._match_terminal(alt, pos)
+                if result:
+                    new_pos, item_sppf = result
+                    new_acc = self._combine_sppf(accumulated_sppf, item_sppf)
+                    new_desc = Descriptor(desc.slot, desc.gss, new_pos, desc.sppf)
+                    self._parse_repeat_items(
+                        choice, separator, at_least, at_most, new_desc,
+                        items_parsed + 1, new_acc, capture_name,
+                    )
+            elif isinstance(alt, GrammarRef):
+                rule = self.grammar.rules.get(alt.name)
+                if rule:
+                    called_slots = self.grammar.slots.get(alt.name, [])
+                    if called_slots:
+                        first_slot = called_slots[0]
+                        self._repeat_counter += 1
+                        cont_name = f"_repeat_{self._repeat_counter}"
+                        cont_slot = GrammarSlot(cont_name, choice, 0, 1)
+                        self._repeat_state[cont_name] = (
+                            choice, separator, at_least, at_most,
+                            items_parsed, capture_name, desc
+                        )
+                        new_gss = self._create(cont_slot, desc.gss, pos, desc.sppf)
                         self._add(Descriptor(first_slot, new_gss, pos, None))
     
     def _process_sequence(self, seq: GrammarSequence, desc: Descriptor, capture_name: str | None = None) -> None:
@@ -934,7 +1259,7 @@ class GLLParser:
     def _parse_repeat_items_then_continue(
         self,
         element: GrammarElement,
-        separator: str | None,
+        separator: GrammarElement | None,
         at_least: int,
         at_most: int | None,
         desc: Descriptor,
@@ -1072,11 +1397,20 @@ class GLLParser:
         elif isinstance(family.slot, str):
             rule_name = family.slot
         
-        # Priority score
-        priority = self.disambig.get_priority(rule_name)
+        # For union/choice disambiguation, we need to look at the child's label
+        # to determine which alternative was actually chosen
+        effective_rule = rule_name
+        if family.children and len(family.children) == 1:
+            child = family.children[0]
+            # If the child's label is in the priority list, use that for disambiguation
+            if child.label in [p for p in self.disambig.priority]:
+                effective_rule = child.label
         
-        # Associativity score
-        assoc = self.disambig.get_associativity(rule_name)
+        # Priority score - use effective_rule for disambiguation
+        priority = self.disambig.get_priority(effective_rule)
+        
+        # Associativity score - also use effective_rule
+        assoc = self.disambig.get_associativity(effective_rule)
         assoc_score = 0
         if assoc == 'left':
             # Prefer left-recursive parse (right child should be smaller)

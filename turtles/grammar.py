@@ -51,34 +51,32 @@ class GrammarRepeat:
     element: GrammarElement
     at_least: int = 0
     at_most: int | None = None  # None = unbounded
-    separator: str | None = None
+    separator: 'GrammarElement | None' = None
 
     def __str__(self) -> str:
         inner = str(self.element)
         
         if self.separator:
             # Expand separator pattern: repeat[A, sep] becomes (A (sep A)*)
-            # Always wrap in parens since it's a multi-part pattern
-            sep_escaped = self.separator.replace('\\', '\\\\').replace('"', '\\"')
-            sep_lit = f'"{sep_escaped}"'
+            sep_str = str(self.separator)
             
             if self.at_least == 0 and self.at_most is None:
                 # Zero or more with separator: (A (sep A)*)?
-                return f'({inner} ({sep_lit} {inner})*)?'
+                return f'({inner} ({sep_str} {inner})*)?'
             elif self.at_least == 1 and self.at_most is None:
                 # One or more with separator: (A (sep A)*)
-                return f'({inner} ({sep_lit} {inner})*)'
+                return f'({inner} ({sep_str} {inner})*)'
             elif self.at_least == 0 and self.at_most == 1:
                 # Zero or one: A?
                 return f'{inner}?'
             else:
                 # Complex bounds - show expanded form with bounds notation
                 if self.at_least == self.at_most:
-                    return f'({inner} ({sep_lit} {inner})*){{{self.at_least}}}'
+                    return f'({inner} ({sep_str} {inner})*){{{self.at_least}}}'
                 elif self.at_most is None:
-                    return f'({inner} ({sep_lit} {inner})*){{{self.at_least},}}'
+                    return f'({inner} ({sep_str} {inner})*){{{self.at_least},}}'
                 else:
-                    return f'({inner} ({sep_lit} {inner})*){{{self.at_least},{self.at_most}}}'
+                    return f'({inner} ({sep_str} {inner})*){{{self.at_least},{self.at_most}}}'
         
         # No separator - simple quantifier
         if self.at_least == 0 and self.at_most is None:
@@ -377,7 +375,7 @@ def _parse_repeat(args: list[ast.expr], source_file: str, source_line: int) -> G
     
     at_least = 0
     at_most: int | None = None
-    separator: str | None = None
+    separator: GrammarElement | None = None
     
     # Remaining args are modifiers
     for mod in args[1:]:
@@ -399,8 +397,8 @@ def _parse_repeat(args: list[ast.expr], source_file: str, source_line: int) -> G
                     at_most = n
             
             elif mod_name == 'separator':
-                if isinstance(mod.slice, ast.Constant) and isinstance(mod.slice.value, str):
-                    separator = mod.slice.value
+                # Parse separator as a grammar element (can be string, char class, rule ref, etc.)
+                separator = _ast_to_grammar(mod.slice, source_file, source_line)
     
     return GrammarRepeat(element, at_least, at_most, separator)
 

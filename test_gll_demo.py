@@ -117,12 +117,6 @@ def demo_expressions():
     print(Mul)
     print(Paren)
     print(Num)
-    # print("Grammar:")
-    # print("  Expr ::= Add | Mul | Paren | Num")
-    # print("  Add  ::= Expr [+-] Expr")
-    # print("  Mul  ::= Expr [*/] Expr")
-    # print("  Paren ::= '(' Expr ')'")
-    # print("  Num  ::= [0-9]+")
     print()
     print("Note: All rules AND the RuleUnion defined inside this function!")
     print()
@@ -310,7 +304,7 @@ def demo_full_json():
         value: repeat[char['0-9'], at_least[1]]
 
     class JNumber(Rule):
-        sign: optional['-']
+        sign: optional[r'-']
         whole: Int
         fractional: optional[Fractional]
         exponent: optional[Exponent]
