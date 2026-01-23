@@ -504,7 +504,7 @@ def _extract_captures(
         list_captures: set of capture names that should be lists (repeat of complex types)
         string_captures: set of capture names that should be strings (repeat of simple types)
     """
-    from .grammar import GrammarSequence, GrammarCapture, GrammarRef, GrammarRepeat, GrammarCharClass, GrammarLiteral
+    from .grammar import GrammarSequence, GrammarCapture, GrammarRef, GrammarRepeat, GrammarCharClass, GrammarLiteral, GrammarChoice
     
     captures: dict[str, list] = {}
     list_captures: set[str] = set()  # Repeat of complex types -> list
@@ -653,6 +653,14 @@ def _extract_captures(
                     
                     # Look for the captured element in the tree
                     inner = elem.rule
+                    
+                    # Unwrap optional pattern: GrammarChoice([inner, GrammarLiteral("")])
+                    if isinstance(inner, GrammarChoice):
+                        non_empty = [a for a in inner.alternatives 
+                                     if not (isinstance(a, GrammarLiteral) and a.value == "")]
+                        if len(non_empty) == 1:
+                            inner = non_empty[0]
+                    
                     if isinstance(inner, GrammarRef):
                         ref_name = inner.name
                         # Find nodes in tree with this label
