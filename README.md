@@ -72,6 +72,49 @@ result.prerelease # Prerelease(ids=['alpha'])
 result.build # Build(ids=['3', '14'])
 ```
 
+
+Toy JSON parser
+```python
+class JNull(Rule):
+    "null"
+
+class JBool(Rule):
+    value: either["true", "false"]
+
+class JNumber(Rule):
+    value: repeat[char['0-9'], at_least[1]]
+
+class JString(Rule):
+    '"'
+    value: repeat[char['a-zA-Z0-9_']]
+    '"'
+
+class JArray(Rule):
+    '['
+    items: repeat[JSONValue, separator[',']]
+    ']'
+
+class Pair(Rule):
+    key: JString
+    ':'
+    value: JSONValue
+
+class JObject(Rule):
+    '{'
+    pairs: repeat[Pair, separator[',']]
+    '}'
+
+JSONValue = JNull | JBool | JNumber | JString | JArray | JObject
+
+
+result = JSONValue('{"A":{"a":null},"B":[true,false,1,2,3],"C":[{"d":[4,5,6]}]}')
+print(repr(result)) # print out the parse result displaying the tree structure
+assert isinstance(result, JObject)
+assert len(result.pairs) == 3
+assert result.pairs[0].key == '"A"'
+# etc. etc.
+```
+
 ## Backend
 WIP. goal is to support multiple parser backends. probably start with `lark`. Also probably include a pure python GLL backend
 
