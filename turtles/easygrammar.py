@@ -1060,10 +1060,13 @@ def tree_string(node: Rule) -> str:
     lines: list[str] = []
     
     def get_fields(obj: Rule) -> list[tuple[str, object]]:
-        """Get field name/value pairs from a Rule instance."""
+        """Get field name/value pairs from a Rule instance, skipping empty optionals."""
         fields = []
         for key, value in obj.__dict__.items():
             if not key.startswith('_'):  # Skip private attributes
+                # Skip empty lists (empty optional fields)
+                if isinstance(value, list) and len(value) == 0:
+                    continue
                 fields.append((key, value))
         return fields
     
