@@ -509,10 +509,33 @@ def _extract_captures(
     captures: dict[str, list] = {}
     list_captures: set[str] = set()  # Repeat of complex types -> list
     string_captures: set[str] = set()  # Repeat of simple types -> string
+    capture_expected_types: dict[str, set[str]] = {}  # capture_name -> set of expected rule names
     
     def is_simple_element(elem) -> bool:
         """Check if an element is simple (char class or literal)."""
         return isinstance(elem, (GrammarCharClass, GrammarLiteral))
+    
+    def get_expected_rule_names(elem) -> set[str]:
+        """Get the set of rule names that are valid for this element."""
+        from .grammar import GrammarChoice
+        names = set()
+        if isinstance(elem, GrammarRef):
+            # Check if it's a union
+            if elem.name in rule_classes:
+                cls = rule_classes[elem.name]
+                if isinstance(cls, RuleUnion):
+                    # Add all alternatives
+                    for alt in cls.alternatives:
+                        if alt is not None and hasattr(alt, '__name__'):
+                            names.add(alt.__name__)
+                else:
+                    names.add(elem.name)
+            else:
+                names.add(elem.name)
+        elif isinstance(elem, GrammarChoice):
+            for alt in elem.alternatives:
+                names.update(get_expected_rule_names(alt))
+        return names
     
     # First, identify which captures are from repeat elements and categorize them
     if target_cls is not None and hasattr(target_cls, '__name__'):
@@ -528,6 +551,15 @@ def _extract_captures(
                                     string_captures.add(elem.name)
                                 else:
                                     list_captures.add(elem.name)
+                                    # Track expected types for filtering
+                                    expected = get_expected_rule_names(elem.rule.element)
+                                    if expected:
+                                        capture_expected_types[elem.name] = expected
+                            elif isinstance(elem.rule, GrammarRef):
+                                # Non-repeat capture - still track expected type
+                                expected = get_expected_rule_names(elem.rule)
+                                if expected:
+                                    capture_expected_types[elem.name] = expected
                 break
     
     def is_simple_capture_label(label: str) -> bool:
@@ -539,15 +571,52 @@ def _extract_captures(
         return name.isidentifier()
     
     # Strategy 1: Look for explicit :name capture nodes
-    def visit(node: 'ParseTree', is_first: bool = False):
+    def visit(node: 'ParseTree', parent: 'ParseTree | None' = None, is_first: bool = False):
         """Visit tree nodes, collecting captures."""
         # If this is a simple capture node (just :name)
         if is_simple_capture_label(node.label):
             capture_name = node.label[1:]
             if capture_name not in captures:
                 captures[capture_name] = []
+            
+            # If the capture node is empty but has a parent with content,
+            # this might be a compound label pattern where the capture marker is at the end
+            # e.g., parent label "[1-9]+:value" with capture ":value" at end
+            # The capture marker is placed AFTER the content it captures.
+            if node.start == node.end and parent is not None and parent.start < parent.end:
+                # Only use parent text if parent label ends with this capture
+                if parent.label.endswith(f':{capture_name}') or parent.label.endswith(f'+:{capture_name}'):
+                    # Check if the preceding siblings are simple terminals (not compound structures)
+                    # If there's a compound sibling (containing '+' or ':' internally), 
+                    # this capture might genuinely have no content
+                    preceding_siblings = []
+                    for sibling in parent.children:
+                        if sibling is node:
+                            break
+                        preceding_siblings.append(sibling)
+                    
+                    # Check if any sibling is a compound structure or Rule
+                    has_compound_sibling = False
+                    for sib in preceding_siblings:
+                        # Compound label containing other captures or Rules
+                        if '+' in sib.label or sib.label in rule_classes:
+                            has_compound_sibling = True
+                            break
+                    
+                    if not has_compound_sibling:
+                        # Simple case: preceding siblings are terminals, content belongs to this capture
+                        content_start = parent.start
+                        content_end = node.start
+                        
+                        if content_start < content_end:
+                            text = input_str[content_start:content_end]
+                            if text:
+                                captures[capture_name].append(text)
+                    return
+            
             # Extract values from this capture's content
-            values = _extract_capture_values(node, input_str, rule_classes, grammar, rules)
+            expected_types = capture_expected_types.get(capture_name)
+            values = _extract_capture_values(node, input_str, rule_classes, grammar, rules, expected_types)
             captures[capture_name].extend(values)
             return
         
@@ -558,10 +627,10 @@ def _extract_captures(
         
         # Visit children (including compound labels that may contain captures)
         for child in node.children:
-            visit(child, is_first=False)
+            visit(child, parent=node, is_first=False)
     
     # Visit starting from root
-    visit(tree, is_first=True)
+    visit(tree, parent=None, is_first=True)
     
     # Strategy 2: Look at the grammar structure for captured references
     # This handles cases like key:JString where the capture isn't explicit in the tree
@@ -587,7 +656,7 @@ def _extract_captures(
                     if isinstance(inner, GrammarRef):
                         ref_name = inner.name
                         # Find nodes in tree with this label
-                        found_nodes = _find_nodes_by_label(tree, ref_name)
+                        found_nodes = _find_nodes_by_label(tree, ref_name, rule_classes)
                         if found_nodes:
                             if capture_name not in captures:
                                 captures[capture_name] = []
@@ -609,20 +678,38 @@ def _extract_captures(
     return captures, list_captures, string_captures
 
 
-def _find_nodes_by_label(tree: 'ParseTree', label: str, depth_limit: int = 3) -> list['ParseTree']:
-    """Find all tree nodes with the given label, limited to a certain depth."""
+def _find_nodes_by_label(
+    tree: 'ParseTree', 
+    label: str, 
+    rule_classes: dict[str, type] | None = None,
+    depth_limit: int = 15
+) -> list['ParseTree']:
+    """
+    Find all tree nodes with the given label.
+    
+    When rule_classes is provided, the search stops when hitting a different Rule node
+    to avoid finding nodes from nested structures.
+    """
     results = []
     
-    def search(node: 'ParseTree', depth: int):
+    def search(node: 'ParseTree', depth: int, found_target_already: bool):
         if depth > depth_limit:
             return
         if node.label == label:
             results.append(node)
             return  # Don't search inside found nodes
+        
+        # If this is a nested Rule node (not the target), don't descend into it
+        # This prevents finding nodes from deeply nested structures
+        if rule_classes and depth > 0:
+            # Check if this node is a Rule (not a capture or internal label)
+            if node.label in rule_classes and node.label != label:
+                return  # Stop - don't descend into nested Rules
+        
         for child in node.children:
-            search(child, depth + 1)
+            search(child, depth + 1, found_target_already)
     
-    search(tree, 0)
+    search(tree, 0, False)
     return results
 
 
@@ -632,12 +719,23 @@ def _extract_capture_values(
     rule_classes: dict[str, type],
     grammar: 'CompiledGrammar',
     rules: list,
+    expected_types: set[str] | None = None,
 ) -> list:
     """
     Extract values from a capture node.
     Returns a list of hydrated Rule instances or text values.
+    
+    Args:
+        expected_types: If provided, only extract Rule nodes whose names are in this set.
+                       This filters out anonymous rules that shouldn't be captured.
     """
     rule_values = []
+    
+    def is_expected_type(label: str) -> bool:
+        """Check if a label matches the expected types."""
+        if expected_types is None:
+            return True  # No filtering
+        return label in expected_types
     
     def find_rule_values(node: 'ParseTree'):
         """Find Rule nodes and hydrate them."""
@@ -649,8 +747,15 @@ def _extract_capture_values(
                 actual_cls = _find_rule_in_tree(node, rule_classes)
                 if actual_cls:
                     cls = actual_cls
+                    # Check if the actual class is expected
+                    if not is_expected_type(cls.__name__):
+                        return  # Skip - not an expected type
                 else:
                     return
+            else:
+                # Check if this rule is expected
+                if not is_expected_type(node.label):
+                    return  # Skip - not an expected type
             # Hydrate this Rule
             if isinstance(cls, type) and issubclass(cls, Rule):
                 hydrated = _hydrate_tree(node, input_str, cls, grammar, rules, rule_classes)

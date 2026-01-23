@@ -228,7 +228,7 @@ def demo_simple_json():
 
     class JString(Rule):
         '"'
-        value: repeat[char['a-zA-Z0-9_']]
+        value: repeat[char[r" !#$%&'()*+,\-./0-9:;<=>?@A-Z[]^_`a-z{|}~"]]
         '"'
 
     class JArray(Rule):
@@ -404,6 +404,8 @@ if __name__ == "__main__":
     demo_version()
     demo_identifier()
     demo_nested()
+    demo_simple_json()
+    demo_full_json()
     
     print("=" * 60)
     print("All demonstrations completed successfully!")
