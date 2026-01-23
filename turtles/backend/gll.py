@@ -655,20 +655,21 @@ class GLLParser:
         if slot.rule_name.startswith("_repeat_"):
             state = self._repeat_state.get(slot.rule_name)
             if state:
-                rep_element, separator, at_least, at_most, items_parsed, capture_name, orig_desc = state
+                rep_element, separator, at_least, at_most, items_parsed, capture_name, orig_desc, accumulated_sppf = state
                 # The current_sppf is the result of parsing one item
-                # Accumulate it and continue the repeat
+                # Combine with accumulated SPPF
+                new_accumulated = self._combine_sppf(accumulated_sppf, current_sppf)
                 items_parsed += 1
                 
                 # If we have enough items, we can stop here (emit a valid parse path)
                 if items_parsed >= at_least:
                     if capture_name:
                         final_sppf = self._get_or_create_sppf(f":{capture_name}",
-                            current_sppf.start if current_sppf else pos, pos)
-                        if current_sppf:
-                            final_sppf.families = current_sppf.families[:]
+                            new_accumulated.start if new_accumulated else pos, pos)
+                        if new_accumulated:
+                            final_sppf.families = new_accumulated.families[:]
                     else:
-                        final_sppf = current_sppf
+                        final_sppf = new_accumulated
                     combined = self._combine_sppf(orig_desc.sppf, final_sppf)
                     next_slot = self._next_slot(orig_desc.slot)
                     if next_slot:
@@ -683,7 +684,7 @@ class GLLParser:
                             if sep_pos is not None:
                                 self._parse_repeat_element(
                                     rep_element, separator, at_least, at_most,
-                                    items_parsed, current_sppf, capture_name, orig_desc, sep_pos
+                                    items_parsed, new_accumulated, capture_name, orig_desc, sep_pos
                                 )
                         elif isinstance(separator, GrammarRef):
                             # Complex separator - parse asynchronously
@@ -698,7 +699,7 @@ class GLLParser:
                                     # Store state for after separator is parsed, including accumulated SPPF
                                     self._repeat_state[cont_name] = (
                                         rep_element, separator, at_least, at_most,
-                                        items_parsed, capture_name, orig_desc, current_sppf  # Include accumulated SPPF
+                                        items_parsed, capture_name, orig_desc, new_accumulated  # Include accumulated SPPF
                                     )
                                     new_gss = self._create(cont_slot, orig_desc.gss, pos, None)  # Don't pass SPPF through edge
                                     self._add(Descriptor(first_slot, new_gss, pos, None))
@@ -706,7 +707,7 @@ class GLLParser:
                         # No separator needed
                         self._parse_repeat_element(
                             rep_element, separator, at_least, at_most,
-                            items_parsed, current_sppf, capture_name, orig_desc, pos
+                            items_parsed, new_accumulated, capture_name, orig_desc, pos
                         )
             return
         
@@ -965,10 +966,10 @@ class GLLParser:
                     self._repeat_counter += 1
                     cont_name = f"_repeat_{self._repeat_counter}"
                     cont_slot = GrammarSlot(cont_name, element, 0, 1)
-                    # Store repeat state for when we return
+                    # Store repeat state for when we return, including accumulated SPPF
                     self._repeat_state[cont_name] = (
                         element, separator, at_least, at_most,
-                        items_parsed, capture_name, desc
+                        items_parsed, capture_name, desc, accumulated_sppf
                     )
                     # Create GSS edge to continue at repeat continuation
                     new_gss = self._create(cont_slot, desc.gss, pos, desc.sppf)
@@ -1016,7 +1017,7 @@ class GLLParser:
                     cont_slot = GrammarSlot(cont_name, element, 0, 1)
                     self._repeat_state[cont_name] = (
                         element, separator, at_least, at_most,
-                        items_parsed, capture_name, orig_desc
+                        items_parsed, capture_name, orig_desc, accumulated_sppf
                     )
                     new_gss = self._create(cont_slot, orig_desc.gss, pos, orig_desc.sppf)
                     self._add(Descriptor(first_slot, new_gss, pos, None))
@@ -1061,7 +1062,7 @@ class GLLParser:
                         cont_slot = GrammarSlot(cont_name, choice, 0, 1)
                         self._repeat_state[cont_name] = (
                             choice, separator, at_least, at_most,
-                            items_parsed, capture_name, desc
+                            items_parsed, capture_name, desc, accumulated_sppf
                         )
                         new_gss = self._create(cont_slot, desc.gss, pos, desc.sppf)
                         self._add(Descriptor(first_slot, new_gss, pos, None))

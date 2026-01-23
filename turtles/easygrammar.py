@@ -361,8 +361,11 @@ class RuleMeta(ABCMeta):
         return cls.__name__
     
     def __repr__(cls) -> str:
-        """Return the grammar rule string representation."""
-        return cls.__str__()
+        """Return standard class representation. Use str(cls) for grammar form."""
+        module = cls.__module__
+        if module and module != '__main__':
+            return f"<class '{module}.{cls.__name__}'>"
+        return f"<class '{cls.__name__}'>"
 
     def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
         """Parse input string and return a hydrated Rule instance."""
@@ -403,12 +406,25 @@ class RuleMeta(ABCMeta):
         return _hydrate_tree(tree, raw, cls, grammar, rules)
 
 
+def _build_rule_classes_map() -> dict[str, type]:
+    """Build a map from rule names to Rule classes."""
+    rule_classes: dict[str, type] = {}
+    all_vars = _get_all_captured_vars()
+    for name, value in all_vars.items():
+        if isinstance(value, type) and issubclass(value, Rule) and value is not Rule:
+            rule_classes[value.__name__] = value
+        elif isinstance(value, RuleUnion) and value._name:
+            rule_classes[value._name] = value
+    return rule_classes
+
+
 def _hydrate_tree(
     tree: 'ParseTree',
     input_str: str,
     target_cls: type,
     grammar: 'CompiledGrammar',
     rules: list,
+    rule_classes: dict[str, type] | None = None,
 ) -> object:
     """
     Hydrate a parse tree into a Rule instance.
@@ -416,39 +432,44 @@ def _hydrate_tree(
     """
     from .backend.gll import ParseTree
     
+    # Build a map of rule names to classes on first call
+    if rule_classes is None:
+        rule_classes = _build_rule_classes_map()
+    
     # Create instance without calling __init__
     instance = object.__new__(target_cls)
     
     # Get matched text
     text = tree.get_text(input_str)
     
-    # Find all captures
-    captures = tree.find_captures()
+    # If the tree label doesn't match target_cls, find the matching subtree
+    target_tree = tree
+    if tree.label != target_cls.__name__:
+        subtree = _find_subtree_for_class(tree, target_cls.__name__)
+        if subtree:
+            target_tree = subtree
     
-    # Build a map of rule names to classes
-    rule_classes: dict[str, type] = {}
-    for rule in rules:
-        # Try to find the class with this name in the caller's context
-        # This is a simplification - in practice we'd need better class resolution
-        rule_classes[rule.name] = target_cls  # placeholder
+    # Find all captures and hydrate them
+    captures, list_captures, string_captures = _extract_captures(target_tree, input_str, rule_classes, grammar, rules, target_cls)
     
     # Populate captured fields
-    for name, capture_trees in captures.items():
-        if len(capture_trees) == 1:
-            capture_tree = capture_trees[0]
-            value = capture_tree.get_text(input_str)
-            setattr(instance, name, value)
+    for name, capture_values in captures.items():
+        if name in string_captures:
+            # Repeat of simple types (char class, literal) - join into string
+            setattr(instance, name, ''.join(str(v) for v in capture_values))
+        elif name in list_captures:
+            # Repeat of complex types - keep as list
+            setattr(instance, name, capture_values)
+        elif len(capture_values) == 1:
+            setattr(instance, name, capture_values[0])
         else:
-            values = [ct.get_text(input_str) for ct in capture_trees]
-            setattr(instance, name, values)
+            setattr(instance, name, capture_values)
     
     # Handle mixin types (Rule, int), (Rule, str), etc.
     for base in target_cls.__mro__:
         if base in (int, float, str, bool) and base is not object:
             try:
                 converted = base(text)
-                # For mixin types, we want the instance to behave like the base type
-                # Store the converted value and override comparison
                 object.__setattr__(instance, '_mixin_value', converted)
             except (ValueError, TypeError):
                 pass
@@ -462,6 +483,223 @@ def _hydrate_tree(
     return instance
 
 
+def _extract_captures(
+    tree: 'ParseTree',
+    input_str: str,
+    rule_classes: dict[str, type],
+    grammar: 'CompiledGrammar',
+    rules: list,
+    target_cls: type | None = None,
+) -> tuple[dict[str, list], set[str], set[str]]:
+    """
+    Extract captures from a parse tree.
+    For each capture, returns either hydrated Rule instances or text values.
+    
+    Uses two strategies:
+    1. Look for explicit :name capture nodes in the tree
+    2. Look at the grammar structure to find captured references (like key:JString)
+    
+    Returns:
+        captures: dict mapping capture names to lists of values
+        list_captures: set of capture names that should be lists (repeat of complex types)
+        string_captures: set of capture names that should be strings (repeat of simple types)
+    """
+    from .grammar import GrammarSequence, GrammarCapture, GrammarRef, GrammarRepeat, GrammarCharClass, GrammarLiteral
+    
+    captures: dict[str, list] = {}
+    list_captures: set[str] = set()  # Repeat of complex types -> list
+    string_captures: set[str] = set()  # Repeat of simple types -> string
+    
+    def is_simple_element(elem) -> bool:
+        """Check if an element is simple (char class or literal)."""
+        return isinstance(elem, (GrammarCharClass, GrammarLiteral))
+    
+    # First, identify which captures are from repeat elements and categorize them
+    if target_cls is not None and hasattr(target_cls, '__name__'):
+        rule_name = target_cls.__name__
+        for r in rules:
+            if r.name == rule_name:
+                if isinstance(r.body, GrammarSequence):
+                    for elem in r.body.elements:
+                        if isinstance(elem, GrammarCapture):
+                            if isinstance(elem.rule, GrammarRepeat):
+                                # Check if the repeat element is simple
+                                if is_simple_element(elem.rule.element):
+                                    string_captures.add(elem.name)
+                                else:
+                                    list_captures.add(elem.name)
+                break
+    
+    def is_simple_capture_label(label: str) -> bool:
+        """Check if a label is a simple capture (just :name, no compound parts)."""
+        if not label.startswith(':'):
+            return False
+        # Simple capture: :name where name is alphanumeric/underscore only
+        name = label[1:]
+        return name.isidentifier()
+    
+    # Strategy 1: Look for explicit :name capture nodes
+    def visit(node: 'ParseTree', is_first: bool = False):
+        """Visit tree nodes, collecting captures."""
+        # If this is a simple capture node (just :name)
+        if is_simple_capture_label(node.label):
+            capture_name = node.label[1:]
+            if capture_name not in captures:
+                captures[capture_name] = []
+            # Extract values from this capture's content
+            values = _extract_capture_values(node, input_str, rule_classes, grammar, rules)
+            captures[capture_name].extend(values)
+            return
+        
+        # If this is a nested Rule node (not the first one), stop
+        # Its captures belong to it, not us
+        if not is_first and node.label in rule_classes:
+            return
+        
+        # Visit children (including compound labels that may contain captures)
+        for child in node.children:
+            visit(child, is_first=False)
+    
+    # Visit starting from root
+    visit(tree, is_first=True)
+    
+    # Strategy 2: Look at the grammar structure for captured references
+    # This handles cases like key:JString where the capture isn't explicit in the tree
+    if target_cls is not None and hasattr(target_cls, '__name__'):
+        rule_name = target_cls.__name__
+        # Find the grammar rule
+        grammar_rule = None
+        for r in rules:
+            if r.name == rule_name:
+                grammar_rule = r
+                break
+        
+        if grammar_rule and isinstance(grammar_rule.body, GrammarSequence):
+            for elem in grammar_rule.body.elements:
+                if isinstance(elem, GrammarCapture):
+                    capture_name = elem.name
+                    # Skip if we already found this capture
+                    if capture_name in captures:
+                        continue
+                    
+                    # Look for the captured element in the tree
+                    inner = elem.rule
+                    if isinstance(inner, GrammarRef):
+                        ref_name = inner.name
+                        # Find nodes in tree with this label
+                        found_nodes = _find_nodes_by_label(tree, ref_name)
+                        if found_nodes:
+                            if capture_name not in captures:
+                                captures[capture_name] = []
+                            for node in found_nodes:
+                                # Hydrate if it's a Rule, otherwise use text
+                                if ref_name in rule_classes:
+                                    cls = rule_classes[ref_name]
+                                    if isinstance(cls, RuleUnion):
+                                        # For unions, find the actual matched alternative
+                                        actual_cls = _find_rule_in_tree(node, rule_classes)
+                                        if actual_cls:
+                                            cls = actual_cls
+                                    if isinstance(cls, type) and issubclass(cls, Rule):
+                                        hydrated = _hydrate_tree(node, input_str, cls, grammar, rules, rule_classes)
+                                        captures[capture_name].append(hydrated)
+                                else:
+                                    captures[capture_name].append(input_str[node.start:node.end])
+    
+    return captures, list_captures, string_captures
+
+
+def _find_nodes_by_label(tree: 'ParseTree', label: str, depth_limit: int = 3) -> list['ParseTree']:
+    """Find all tree nodes with the given label, limited to a certain depth."""
+    results = []
+    
+    def search(node: 'ParseTree', depth: int):
+        if depth > depth_limit:
+            return
+        if node.label == label:
+            results.append(node)
+            return  # Don't search inside found nodes
+        for child in node.children:
+            search(child, depth + 1)
+    
+    search(tree, 0)
+    return results
+
+
+def _extract_capture_values(
+    capture_node: 'ParseTree',
+    input_str: str,
+    rule_classes: dict[str, type],
+    grammar: 'CompiledGrammar',
+    rules: list,
+) -> list:
+    """
+    Extract values from a capture node.
+    Returns a list of hydrated Rule instances or text values.
+    """
+    rule_values = []
+    
+    def find_rule_values(node: 'ParseTree'):
+        """Find Rule nodes and hydrate them."""
+        # Check if this node is a Rule
+        if node.label in rule_classes:
+            cls = rule_classes[node.label]
+            # If it's a union, find the actual matched alternative
+            if isinstance(cls, RuleUnion):
+                actual_cls = _find_rule_in_tree(node, rule_classes)
+                if actual_cls:
+                    cls = actual_cls
+                else:
+                    return
+            # Hydrate this Rule
+            if isinstance(cls, type) and issubclass(cls, Rule):
+                hydrated = _hydrate_tree(node, input_str, cls, grammar, rules, rule_classes)
+                rule_values.append(hydrated)
+                return
+        
+        # Not a Rule node - check children
+        for child in node.children:
+            find_rule_values(child)
+    
+    # First, look for Rule nodes
+    for child in capture_node.children:
+        find_rule_values(child)
+    
+    # If Rule nodes were found, return them
+    if rule_values:
+        return rule_values
+    
+    # No Rule nodes found - this is a terminal capture, use text
+    text = input_str[capture_node.start:capture_node.end]
+    if text:
+        return [text]
+    return []
+
+
+def _find_subtree_for_class(tree: 'ParseTree', class_name: str) -> 'ParseTree | None':
+    """Find the subtree whose label matches the given class name."""
+    if tree.label == class_name:
+        return tree
+    for child in tree.children:
+        result = _find_subtree_for_class(child, class_name)
+        if result:
+            return result
+    return None
+
+
+def _find_rule_in_tree(tree: 'ParseTree', rule_classes: dict[str, type]) -> type | None:
+    """Find the first Rule class in a tree."""
+    for child in tree.children:
+        if child.label in rule_classes:
+            cls = rule_classes[child.label]
+            if isinstance(cls, type) and issubclass(cls, Rule):
+                return cls
+        result = _find_rule_in_tree(child, rule_classes)
+        if result:
+            return result
+    return None
+
+
 # @dataclass_transform()
 class Rule(ABC, metaclass=RuleMeta):
     """initialize a token subclass as a dataclass"""
@@ -472,6 +710,9 @@ class Rule(ABC, metaclass=RuleMeta):
     
     def __eq__(self, other: object) -> bool:
         """Compare with other values. Supports comparison with mixin base types."""
+        # Allow comparison with class (e.g., instance == JNull)
+        if isinstance(other, type) and issubclass(other, Rule):
+            return isinstance(self, other)
         if hasattr(self, '_mixin_value'):
             # For mixin types, compare the converted value
             return self._mixin_value == other
@@ -681,6 +922,9 @@ def tree_string(node: Rule) -> str:
     """
     Generate a tree-formatted string representation of a parsed Rule.
     
+    Works from the hydrated instance's actual attributes, correctly showing
+    all items in lists and nested structures.
+    
     Args:
         node: A hydrated Rule instance from parsing
     
@@ -694,214 +938,70 @@ def tree_string(node: Rule) -> str:
         ├── left: Paren
         │   └── inner: Add
         │       ├── left: Num
-        │       │   └── 1
+        │       │   └── value: 1
         │       └── right: Num
-        │           └── 2
+        │           └── value: 2
         └── right: Num
-            └── 3
+            └── value: 3
     """
-    from .backend.gll import ParseTree
-    
-    if not hasattr(node, '_tree') or not hasattr(node, '_input_str'):
-        return f"{node.__class__.__name__}: {node}"
-    
-    tree: ParseTree = node._tree
-    input_str: str = node._input_str
-    
-    # Build a map of rule names to their field sequences
-    # This helps us infer field names from child order
-    rule_fields: dict[str, list[str]] = {}
-    
-    def get_rule_fields(rule_name: str) -> list[str]:
-        """Get the field names for a rule in order."""
-        if rule_name in rule_fields:
-            return rule_fields[rule_name]
-        
-        # Try to find the rule class
-        all_vars = _get_all_captured_vars()
-        for name, value in all_vars.items():
-            if isinstance(value, type) and issubclass(value, Rule) and value.__name__ == rule_name:
-                # Get the _sequence attribute
-                if hasattr(value, '_sequence'):
-                    fields = []
-                    for item in value._sequence:
-                        if item[0] == 'decl' and item[1]:  # Named field
-                            fields.append(item[1])
-                    rule_fields[rule_name] = fields
-                    return fields
-        
-        rule_fields[rule_name] = []
-        return []
-    
-    # Collect user-defined rule names by looking at the parse tree
-    rule_names: set[str] = set()
-    union_names: set[str] = set()
-    
-    def is_user_rule_name(label: str) -> bool:
-        """Check if a label is a user-defined rule name (not internal GLL label)."""
-        if not label or label.startswith(':') or label.startswith('_'):
-            return False
-        if any(c in label for c in '+-*[](){}|"\''):
-            return False
-        if not label[0].isupper():
-            return False
-        return label.isidentifier()
-    
-    def collect_rule_names(t: ParseTree) -> None:
-        if is_user_rule_name(t.label):
-            rule_names.add(t.label)
-        for c in t.children:
-            collect_rule_names(c)
-    collect_rule_names(tree)
-    
-    # Identify union names by checking if the rule has field definitions
-    # Rules with fields are meaningful (Add, Mul, Paren, Num)
-    # Rules without fields that just wrap other rules are unions (Expr)
-    def is_union_rule(rule_name: str) -> bool:
-        """Check if a rule is a union (no fields, just wraps other rules)."""
-        all_vars = _get_all_captured_vars()
-        for name, value in all_vars.items():
-            if isinstance(value, type) and issubclass(value, Rule) and value.__name__ == rule_name:
-                # Check if it has any field declarations
-                if hasattr(value, '_sequence'):
-                    for item in value._sequence:
-                        if item[0] == 'decl' and item[1]:  # Has a named field
-                            return False
-                return False  # It's a Rule class with definition, not a union
-            elif isinstance(value, RuleUnion) and value._name == rule_name:
-                return True  # It's a RuleUnion
-        # Assume unknown rules might be unions if they only contain one child rule
-        return True
-    
-    # Mark all RuleUnion names as unions
-    all_vars = _get_all_captured_vars()
-    for name, value in all_vars.items():
-        if isinstance(value, RuleUnion) and value._name:
-            union_names.add(value._name)
-    
-    # Also detect from the tree: rules that only wrap other rules without adding structure
-    def analyze_unions(t: ParseTree) -> None:
-        if is_user_rule_name(t.label) and t.label not in union_names:
-            if is_union_rule(t.label):
-                union_names.add(t.label)
-        for c in t.children:
-            analyze_unions(c)
-    analyze_unions(tree)
-    
-    # Structured tree node
-    class TreeNode:
-        def __init__(self, rule_name: str, text: str):
-            self.rule_name = rule_name
-            self.text = text
-            self.children: list[tuple[str | None, TreeNode]] = []
-    
-    def is_meaningful_rule(label: str) -> bool:
-        return is_user_rule_name(label) and label not in union_names
-    
-    def extract_structure(t: ParseTree, parent_rule: str | None = None, field_index: list[int] | None = None) -> TreeNode | None:
-        """Extract meaningful structure from parse tree."""
-        if is_meaningful_rule(t.label):
-            node = TreeNode(t.label, t.get_text(input_str))
-            find_children(t, node, t.label)
-            return node
-        
-        if t.label in union_names:
-            for c in t.children:
-                result = extract_structure(c, parent_rule, field_index)
-                if result:
-                    return result
-        
-        for c in t.children:
-            result = extract_structure(c, parent_rule, field_index)
-            if result:
-                return result
-        return None
-    
-    def find_children(t: ParseTree, parent: TreeNode, parent_rule: str) -> None:
-        """Find children, inferring field names from rule definition."""
-        fields = get_rule_fields(parent_rule)
-        rule_child_index = 0
-        
-        def process_subtree(pt: ParseTree) -> None:
-            nonlocal rule_child_index
-            
-            if pt.label.startswith(':'):
-                # Explicit capture
-                capture_name = pt.label[1:]
-                rule_node = find_rule_in_tree(pt)
-                if rule_node:
-                    parent.children.append((capture_name, rule_node))
-                else:
-                    leaf = TreeNode("", pt.get_text(input_str))
-                    parent.children.append((capture_name, leaf))
-            elif is_meaningful_rule(pt.label):
-                # Infer field name from position
-                field_name = None
-                if rule_child_index < len(fields):
-                    field_name = fields[rule_child_index]
-                rule_child_index += 1
-                
-                rule_node = extract_structure(pt)
-                if rule_node:
-                    parent.children.append((field_name, rule_node))
-            elif pt.label in union_names:
-                # Union passthrough - process contents
-                for c in pt.children:
-                    process_subtree(c)
-            else:
-                # Continue searching
-                for c in pt.children:
-                    process_subtree(c)
-        
-        for child in t.children:
-            process_subtree(child)
-    
-    def find_rule_in_tree(t: ParseTree) -> TreeNode | None:
-        """Find a meaningful rule in a tree."""
-        if is_meaningful_rule(t.label):
-            node = TreeNode(t.label, t.get_text(input_str))
-            find_children(t, node, t.label)
-            return node
-        if t.label in union_names:
-            for c in t.children:
-                result = find_rule_in_tree(c)
-                if result:
-                    return result
-        for c in t.children:
-            result = find_rule_in_tree(c)
-            if result:
-                return result
-        return None
-    
-    root = extract_structure(tree)
-    if not root:
-        return f"{node.__class__.__name__}: {node}"
-    
     lines: list[str] = []
     
-    def render(n: TreeNode, prefix: str, connector: str, child_prefix: str, label: str | None) -> None:
-        if n.rule_name:
-            if label:
-                lines.append(f"{prefix}{connector}{label}: {n.rule_name}")
-            else:
-                lines.append(f"{prefix}{connector}{n.rule_name}")
-            
-            if n.children:
-                for i, (child_label, child_node) in enumerate(n.children):
-                    is_last = (i == len(n.children) - 1)
-                    if is_last:
-                        render(child_node, child_prefix, "└── ", child_prefix + "    ", child_label)
-                    else:
-                        render(child_node, child_prefix, "├── ", child_prefix + "│   ", child_label)
-            else:
-                lines.append(f"{child_prefix}└── {n.text}")
-        else:
-            if label:
-                lines.append(f"{prefix}{connector}{label}: {n.text}")
-            else:
-                lines.append(f"{prefix}{connector}{n.text}")
+    def get_fields(obj: Rule) -> list[tuple[str, object]]:
+        """Get field name/value pairs from a Rule instance."""
+        fields = []
+        for key, value in obj.__dict__.items():
+            if not key.startswith('_'):  # Skip private attributes
+                fields.append((key, value))
+        return fields
     
-    render(root, "", "", "", None)
+    def render_value(value: object, prefix: str, connector: str, label: str | None) -> None:
+        """Render a single value."""
+        if isinstance(value, Rule):
+            # It's a Rule instance - show class name and recurse
+            class_name = value.__class__.__name__
+            if label:
+                lines.append(f"{prefix}{connector}{label}: {class_name}")
+            else:
+                lines.append(f"{prefix}{connector}{class_name}")
+            
+            # Get fields for this Rule
+            fields = get_fields(value)
+            child_prefix = prefix + ("    " if connector == "└── " else "│   ")
+            
+            if fields:
+                for i, (field_name, field_value) in enumerate(fields):
+                    is_last = (i == len(fields) - 1)
+                    next_connector = "└── " if is_last else "├── "
+                    render_value(field_value, child_prefix, next_connector, field_name)
+            else:
+                # No fields - show the text value
+                if hasattr(value, '_text'):
+                    lines.append(f"{child_prefix}└── {value._text}")
+        elif isinstance(value, list):
+            # It's a list - render each item
+            if label:
+                lines.append(f"{prefix}{connector}{label}: [{len(value)} items]")
+            child_prefix = prefix + ("    " if connector == "└── " else "│   ")
+            for i, item in enumerate(value):
+                is_last = (i == len(value) - 1)
+                next_connector = "└── " if is_last else "├── "
+                render_value(item, child_prefix, next_connector, f"[{i}]")
+        else:
+            # It's a simple value (string, int, etc.)
+            if label:
+                lines.append(f"{prefix}{connector}{label}: {value}")
+            else:
+                lines.append(f"{prefix}{connector}{value}")
+    
+    # Start with the root node
+    class_name = node.__class__.__name__
+    lines.append(class_name)
+    
+    fields = get_fields(node)
+    for i, (field_name, field_value) in enumerate(fields):
+        is_last = (i == len(fields) - 1)
+        connector = "└── " if is_last else "├── "
+        render_value(field_value, "", connector, field_name)
     
     return "\n".join(lines)
 
