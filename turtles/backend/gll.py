@@ -320,6 +320,7 @@ class CompiledGrammar:
     rules: dict[str, GrammarRule]
     slots: dict[str, list[GrammarSlot]]  # rule_name -> slots for that rule
     char_matchers: dict[str, Callable[[str], bool]]  # cached char class matchers
+    body_to_rule: dict[str, str] = field(default_factory=dict)  # sequence description -> rule name
     
     @classmethod
     def from_rules(cls, rules: list[GrammarRule]) -> CompiledGrammar:
@@ -327,12 +328,38 @@ class CompiledGrammar:
         rules_dict = {r.name: r for r in rules}
         slots: dict[str, list[GrammarSlot]] = {}
         char_matchers: dict[str, Callable[[str], bool]] = {}
+        body_to_rule: dict[str, str] = {}
         
         for rule in rules:
             rule_slots = cls._compile_element(rule.name, rule.body, char_matchers)
             slots[rule.name] = rule_slots
+            # Map body description to rule name for disambiguation
+            body_desc = cls._element_description(rule.body)
+            body_to_rule[body_desc] = rule.name
         
-        return cls(rules_dict, slots, char_matchers)
+        return cls(rules_dict, slots, char_matchers, body_to_rule)
+    
+    @classmethod
+    def _element_description(cls, elem: GrammarElement) -> str:
+        """Generate a description string matching SPPF node labels."""
+        if isinstance(elem, GrammarLiteral):
+            return f'"{elem.value}"'
+        elif isinstance(elem, GrammarCharClass):
+            return f"[{elem.pattern}]"
+        elif isinstance(elem, GrammarRef):
+            return elem.name
+        elif isinstance(elem, GrammarSequence):
+            return "+".join(cls._element_description(e) for e in elem.elements)
+        elif isinstance(elem, GrammarCapture):
+            # For SPPF matching, use the inner element's description, not the capture name
+            return cls._element_description(elem.rule)
+        elif isinstance(elem, GrammarChoice):
+            # Choices don't appear as combined labels in the same way
+            return "|".join(cls._element_description(a) for a in elem.alternatives)
+        elif isinstance(elem, GrammarRepeat):
+            return cls._element_description(elem.element) + "*"
+        else:
+            return str(elem)
     
     @classmethod
     def _compile_element(
@@ -1406,6 +1433,14 @@ class GLLParser:
             # If the child's label is in the priority list, use that for disambiguation
             if child.label in [p for p in self.disambig.priority]:
                 effective_rule = child.label
+        
+        # For sequence nodes (like Expr+"+"+Expr), look up the enclosing rule
+        # using the body_to_rule map
+        if effective_rule not in self.disambig.associativity and effective_rule not in self.disambig.priority:
+            # Try to find the rule that has this as its body
+            mapped_rule = self.grammar.body_to_rule.get(parent.label)
+            if mapped_rule:
+                effective_rule = mapped_rule
         
         # Priority score - use effective_rule for disambiguation
         priority = self.disambig.get_priority(effective_rule)

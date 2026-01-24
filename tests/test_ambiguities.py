@@ -59,8 +59,8 @@ def expr_grammar():
     # Set precedence: Pow > Mul > Add (higher precedence = binds tighter)
     Expr.precedence = [Pow, Mul, Add]
     
-    # Associativity not working yet, but define for future
-    # Expr.associativity = {Add: 'left', Mul: 'left', Pow: 'right'}
+    # Set associativity
+    Expr.associativity = {Add: 'left', Mul: 'left', Pow: 'right'}
 
     return {
         'Expr': Expr,
@@ -247,24 +247,23 @@ class TestParentheses:
 # =============================================================================
 
 class TestAssociativity:
-    """Test associativity rules. Currently skipped as not implemented."""
+    """Test associativity rules."""
     
-    @pytest.mark.skip(reason="Associativity not yet implemented")
     def test_add_left_associative(self, expr_grammar):
         """1+2+3 should parse as (1+2)+3 with left associativity"""
         Expr = expr_grammar['Expr']
         Add = expr_grammar['Add']
+        Num = expr_grammar['Num']
         
         result = Expr("1+2+3")
         # With left associativity: (1+2)+3
         # Top should be Add with left=Add(1,2) and right=3
-        assert isinstance(result, Add)
-        assert isinstance(result.left, Add)
+        assert isinstance(result, Add), f"Expected Add, got {type(result).__name__}"
+        assert isinstance(result.left, Add), f"Expected left to be Add, got {type(result.left).__name__}"
         assert result.left.left.value == "1"
         assert result.left.right.value == "2"
         assert result.right.value == "3"
     
-    @pytest.mark.skip(reason="Associativity not yet implemented")
     def test_pow_right_associative(self, expr_grammar):
         """2^3^4 should parse as 2^(3^4) with right associativity"""
         Expr = expr_grammar['Expr']
@@ -273,9 +272,9 @@ class TestAssociativity:
         result = Expr("2^3^4")
         # With right associativity: 2^(3^4)
         # Top should be Pow with left=2 and right=Pow(3,4)
-        assert isinstance(result, Pow)
+        assert isinstance(result, Pow), f"Expected Pow, got {type(result).__name__}"
         assert result.left.value == "2"
-        assert isinstance(result.right, Pow)
+        assert isinstance(result.right, Pow), f"Expected right to be Pow, got {type(result.right).__name__}"
         assert result.right.left.value == "3"
         assert result.right.right.value == "4"
 
