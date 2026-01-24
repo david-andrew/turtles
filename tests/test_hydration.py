@@ -862,5 +862,119 @@ def test_json_with_whitespace():
     assert result.pairs[0].value.value == "1"
 
 
+def test_toy_json():
+    from turtles.examples.toy_json import JSONValue, JObject, JArray, JString, JNumber, JBool, JNull
+
+    src = '{"A":{"a":null},"B":[true,false,1,2,3],"C":[{"d":[4,5,6]}]}'
+
+    result = JSONValue(src)
+
+
+    assert isinstance(result, JObject)
+    assert len(result.pairs) == 3
+    assert isinstance(result.pairs[0].key, JString)
+    assert result.pairs[0].key == '"A"'
+    assert isinstance(result.pairs[0].value, JObject)
+    assert len(result.pairs[0].value.pairs) == 1
+    assert result.pairs[0].value.pairs[0].key == '"a"'
+    assert result.pairs[0].value.pairs[0].value == JNull
+    assert result.pairs[1].key == '"B"'
+    assert isinstance(result.pairs[1].value, JArray)
+    assert len(result.pairs[1].value.items) == 5
+    assert isinstance(result.pairs[1].value.items[0], JBool)
+    assert result.pairs[1].value.items[0].value == "true"
+    assert isinstance(result.pairs[1].value.items[1], JBool)
+    assert result.pairs[1].value.items[1].value == "false"
+    assert isinstance(result.pairs[1].value.items[2], JNumber)
+    assert result.pairs[1].value.items[2].value == "1"
+    assert isinstance(result.pairs[1].value.items[3], JNumber)
+    assert result.pairs[1].value.items[3].value == "2"
+    assert isinstance(result.pairs[1].value.items[4], JNumber)
+    assert result.pairs[1].value.items[4].value == "3"
+    assert result.pairs[2].key == '"C"'
+    assert isinstance(result.pairs[2].value, JArray)
+    assert len(result.pairs[2].value.items) == 1
+    assert isinstance(result.pairs[2].value.items[0], JObject)
+    assert len(result.pairs[2].value.items[0].pairs) == 1
+    assert result.pairs[2].value.items[0].pairs[0].key == '"d"'
+    assert isinstance(result.pairs[2].value.items[0].pairs[0].value, JArray)
+    assert len(result.pairs[2].value.items[0].pairs[0].value.items) == 3
+    assert isinstance(result.pairs[2].value.items[0].pairs[0].value.items[0], JNumber)
+    assert result.pairs[2].value.items[0].pairs[0].value.items[0].value == "4"
+    assert isinstance(result.pairs[2].value.items[0].pairs[0].value.items[1], JNumber)
+    assert result.pairs[2].value.items[0].pairs[0].value.items[1].value == "5"
+    assert isinstance(result.pairs[2].value.items[0].pairs[0].value.items[2], JNumber)
+    assert result.pairs[2].value.items[0].pairs[0].value.items[2].value == "6"
+
+
+def test_json():
+    from turtles.examples.json import JSON, JObject, JString, JNull, JArray, JNumber, JBool
+
+    src = '''
+    {
+      "A": { "a" : null },
+      "B": [true, false, 1, 2.0, 3.14159],
+      "C": [
+        { "d": [4e9,5E-323,6.123e+10, [null, true, {"e": false}]] }
+      ],
+      "λ你好": "λ世界"
+    }
+    '''
+    
+    result = JSON(src)
+
+    assert isinstance(result.value, JObject)
+    assert len(result.value.pairs) == 4
+    assert isinstance(result.value.pairs[0].key, JString)
+    assert result.value.pairs[0].key == '"A"'
+    assert isinstance(result.value.pairs[0].value, JObject)
+    assert len(result.value.pairs[0].value.pairs) == 1
+    assert result.value.pairs[0].value.pairs[0].key == '"a"'
+    assert result.value.pairs[0].value.pairs[0].value == JNull
+    assert result.value.pairs[1].key == '"B"'
+    assert isinstance(result.value.pairs[1].value, JArray)
+    assert len(result.value.pairs[1].value.items) == 5
+    assert isinstance(result.value.pairs[1].value.items[0], JBool)
+    assert result.value.pairs[1].value.items[0].value == "true"
+    assert isinstance(result.value.pairs[1].value.items[1], JBool)
+    assert result.value.pairs[1].value.items[1].value == "false"
+    assert isinstance(result.value.pairs[1].value.items[2], JNumber)
+    assert result.value.pairs[1].value.items[2] == '1'
+    assert result.value.pairs[1].value.items[3].whole == '2'
+    assert result.value.pairs[1].value.items[3].fractional == '.0'
+    assert result.value.pairs[1].value.items[4].whole == '3'
+    assert result.value.pairs[1].value.items[4].fractional == '.14159'
+    assert result.value.pairs[2].key == '"C"'
+    assert isinstance(result.value.pairs[2].value, JArray)
+    assert len(result.value.pairs[2].value.items) == 1
+    assert isinstance(result.value.pairs[2].value.items[0], JObject)
+    assert len(result.value.pairs[2].value.items[0].pairs) == 1
+    assert result.value.pairs[2].value.items[0].pairs[0].key == '"d"'
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value, JArray)
+    assert len(result.value.pairs[2].value.items[0].pairs[0].value.items) == 4
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value.items[0], JNumber)
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[0].whole == '4'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[0].exponent == 'e9'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[1].whole == '5'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[1].exponent.sign == '-'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[1].exponent.value == '323'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[2].whole == '6'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[2].fractional.value == '123'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[2].exponent.sign == '+'
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[2].exponent.value == '10'
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value.items[3], JArray)
+    assert len(result.value.pairs[2].value.items[0].pairs[0].value.items[3].items) == 3
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[0], JNull)
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[1], JBool)
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[1].value == "true"
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[2], JObject)
+    assert len(result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[2].pairs) == 1
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[2].pairs[0].key == '"e"'
+    assert isinstance(result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[2].pairs[0].value, JBool)
+    assert result.value.pairs[2].value.items[0].pairs[0].value.items[3].items[2].pairs[0].value.value == "false"
+    assert result.value.pairs[3].key == '"λ你好"'
+    assert isinstance(result.value.pairs[3].value, JString)
+    assert result.value.pairs[3].value == '"λ世界"'
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
