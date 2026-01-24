@@ -1,4 +1,8 @@
 # Turtles
+[![PyPI version](https://img.shields.io/pypi/v/turtles.svg)](https://pypi.org/project/turtles/)
+[![Python versions](https://img.shields.io/pypi/pyversions/turtles.svg)](https://pypi.org/project/turtles/)
+[![CI](https://github.com/david-andrew/turtles/actions/workflows/test.yml/badge.svg)](https://github.com/david-andrew/turtles/actions/workflows/test.yml)
+
 Parsing made easy in python. Also serves as a more human readable replacement for regex.
 
 > NOTE: implementation is work in progress. many features are buggy or incomplete.
