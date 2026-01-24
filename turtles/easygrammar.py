@@ -436,11 +436,25 @@ def _hydrate_tree(
     if rule_classes is None:
         rule_classes = _build_rule_classes_map()
     
-    # Create instance without calling __init__
-    instance = object.__new__(target_cls)
-    
     # Get matched text
     text = tree.get_text(input_str)
+    
+    # Create instance without calling __init__
+    # For mixin types (Rule, int), (Rule, str), etc., we need to use their __new__
+    mixin_base = None
+    for base in target_cls.__mro__:
+        if base in (int, float, str, bool) and base is not object:
+            mixin_base = base
+            break
+    
+    if mixin_base:
+        # Need to use mixin type's __new__ with the text value
+        try:
+            instance = mixin_base.__new__(target_cls, text)
+        except (ValueError, TypeError):
+            instance = object.__new__(target_cls)
+    else:
+        instance = object.__new__(target_cls)
     
     # If the tree label doesn't match target_cls, find the matching subtree
     target_tree = tree
@@ -449,8 +463,10 @@ def _hydrate_tree(
         if subtree:
             target_tree = subtree
     
-    # Find all captures and hydrate them
-    captures, list_captures, string_captures = _extract_captures(target_tree, input_str, rule_classes, grammar, rules, target_cls)
+    # Find all captures and hydrate them using grammar-guided extraction
+    captures, list_captures, string_captures = _grammar_guided_extract(
+        target_tree, input_str, target_cls, rules, rule_classes
+    )
     
     # Populate captured fields
     for name, capture_values in captures.items():
@@ -481,6 +497,272 @@ def _hydrate_tree(
     object.__setattr__(instance, '_input_str', input_str)
     
     return instance
+
+
+# =============================================================================
+# Grammar-Guided Extraction
+# =============================================================================
+
+def _grammar_guided_extract(
+    tree: 'ParseTree',
+    input_str: str,
+    target_cls: type,
+    rules: list,
+    rule_classes: dict[str, type],
+) -> tuple[dict[str, list], set[str], set[str]]:
+    """
+    Extract captures by walking the grammar and tree together.
+    
+    Key tree structure patterns:
+    - Terminal captures: `:name` node with text span
+    - Rule captures: Rule name appears directly in tree (not `:name`)
+    - Empty optional: `:name` with empty span (start == end)
+    - Repeat with separator: compound labels like `Num+Num` containing items
+    
+    Returns:
+        captures: dict mapping capture names to lists of values
+        list_captures: set of capture names that should be lists
+        string_captures: set of capture names that should be strings
+    """
+    from .grammar import (
+        GrammarSequence, GrammarCapture, GrammarRef, GrammarRepeat, 
+        GrammarCharClass, GrammarLiteral, GrammarChoice
+    )
+    from .backend.gll import ParseTree
+    
+    captures: dict[str, list] = {}
+    list_captures: set[str] = set()
+    string_captures: set[str] = set()
+    
+    # Find the grammar rule for target_cls
+    grammar_rule = None
+    if target_cls is not None and hasattr(target_cls, '__name__'):
+        rule_name = target_cls.__name__
+        for r in rules:
+            if r.name == rule_name:
+                grammar_rule = r
+                break
+    
+    if grammar_rule is None:
+        return captures, list_captures, string_captures
+    
+    def is_simple_element(elem) -> bool:
+        """Check if an element is simple (char class or literal)."""
+        if isinstance(elem, (GrammarCharClass, GrammarLiteral)):
+            return True
+        if isinstance(elem, GrammarChoice):
+            return all(is_simple_element(a) for a in elem.alternatives)
+        if isinstance(elem, GrammarSequence):
+            return all(is_simple_element(e) for e in elem.elements)
+        return False
+    
+    def unwrap_optional(elem):
+        """Unwrap optional pattern: GrammarChoice([inner, GrammarLiteral("")])"""
+        if isinstance(elem, GrammarChoice):
+            non_empty = [a for a in elem.alternatives 
+                         if not (isinstance(a, GrammarLiteral) and a.value == "")]
+            if len(non_empty) == 1:
+                return non_empty[0], True
+        return elem, False
+    
+    def get_ref_name(elem) -> str | None:
+        """Get the reference name from an element if it's a GrammarRef."""
+        if isinstance(elem, GrammarRef):
+            return elem.name
+        return None
+    
+    def find_rule_node(node: ParseTree, rule_name: str, skip_root: bool = True) -> ParseTree | None:
+        """Find a single Rule node by name, skipping the root to avoid recursion issues."""
+        def _search(n: ParseTree, is_root: bool) -> ParseTree | None:
+            # Found exact match (but skip root if it's the same rule we're hydrating)
+            if n.label == rule_name:
+                if is_root and skip_root:
+                    # Skip the root, search children instead
+                    pass
+                else:
+                    return n
+            
+            # Check compound labels (e.g., "Key+WS+Val")
+            if '+' in n.label and rule_name in n.label.split('+'):
+                for child in n.children:
+                    result = _search(child, False)
+                    if result:
+                        return result
+            
+            # Don't descend into other Rules (except the root)
+            if n.label in rule_classes and n.label != target_cls.__name__:
+                return None
+            
+            # Search children
+            for child in n.children:
+                result = _search(child, False)
+                if result:
+                    return result
+            
+            return None
+        
+        return _search(node, True)
+    
+    def find_all_rule_nodes(node: ParseTree, rule_name: str, results: list = None, depth: int = 0) -> list[ParseTree]:
+        """Find all Rule nodes by name (for repeats)."""
+        if results is None:
+            results = []
+        
+        # Found exact match
+        if node.label == rule_name:
+            results.append(node)
+            return results  # Don't descend into the matched rule
+        
+        # Check compound labels
+        has_rule_in_label = '+' in node.label and rule_name in node.label.split('+')
+        
+        # Don't descend into other Rules (except root and compound labels)
+        if node.label in rule_classes and node.label != target_cls.__name__ and not has_rule_in_label:
+            return results
+        
+        # Search children
+        for child in node.children:
+            find_all_rule_nodes(child, rule_name, results, depth + 1)
+        
+        return results
+    
+    def find_capture_node(node: ParseTree, capture_name: str) -> tuple[ParseTree | None, int, int]:
+        """
+        Find a :name capture node and return (node, start, end).
+        Returns the actual capture node and its span.
+        """
+        # Check if this is the exact capture node
+        if node.label == f':{capture_name}':
+            return node, node.start, node.end
+        
+        # Check compound labels
+        if f':{capture_name}' in node.label:
+            # Search children for more specific capture node
+            for child in node.children:
+                result, start, end = find_capture_node(child, capture_name)
+                if result:
+                    return result, start, end
+            # This compound node itself represents the capture
+            return node, node.start, node.end
+        
+        # Don't descend into other Rules
+        if node.label in rule_classes and node.label != target_cls.__name__:
+            return None, 0, 0
+        
+        # Search children
+        for child in node.children:
+            result, start, end = find_capture_node(child, capture_name)
+            if result:
+                return result, start, end
+        
+        return None, 0, 0
+    
+    def find_capture_span_for_compound(node: ParseTree, capture_name: str, grammar_elem) -> tuple[int, int] | None:
+        """
+        For compound grammar elements (choices with sequences), find the full span.
+        This handles cases like either['0', sequence[char['1-9'], repeat[...]]]
+        where the tree has [1-9]+:value but we need the full span.
+        """
+        # Only applies to choices
+        if not isinstance(grammar_elem, GrammarChoice):
+            return None
+        
+        # Check if any alternative is a sequence
+        has_sequence_alt = any(
+            isinstance(alt, GrammarSequence) and len(alt.elements) > 1
+            for alt in grammar_elem.alternatives
+        )
+        if not has_sequence_alt:
+            return None
+        
+        # Find the compound label containing this capture
+        def find_compound_label(n: ParseTree) -> ParseTree | None:
+            if f':{capture_name}' in n.label and '+' in n.label:
+                # Check if this has only one capture
+                if n.label.count(':') == 1:
+                    return n
+            for child in n.children:
+                result = find_compound_label(child)
+                if result:
+                    return result
+            return None
+        
+        compound = find_compound_label(node)
+        if compound:
+            return compound.start, compound.end
+        return None
+    
+    def hydrate_rule_node(node: ParseTree, ref_name: str):
+        """Hydrate a Rule node."""
+        if ref_name in rule_classes:
+            cls = rule_classes[ref_name]
+            if isinstance(cls, RuleUnion):
+                actual_cls = _find_rule_in_tree(node, rule_classes)
+                if actual_cls:
+                    cls = actual_cls
+            if isinstance(cls, type) and issubclass(cls, Rule):
+                return _hydrate_tree(node, input_str, cls, None, rules, rule_classes)
+        return input_str[node.start:node.end]
+    
+    # Analyze the grammar and extract captures
+    if isinstance(grammar_rule.body, GrammarSequence):
+        for elem in grammar_rule.body.elements:
+            if not isinstance(elem, GrammarCapture):
+                continue
+            
+            name = elem.name
+            inner = elem.rule
+            captures[name] = []
+            
+            # Unwrap optional
+            inner_unwrapped, is_optional = unwrap_optional(inner)
+            
+            # Determine capture type
+            # Only repeats should be in list_captures/string_captures
+            # Optionals return [] when absent, single value when present
+            if isinstance(inner_unwrapped, GrammarRepeat):
+                if is_simple_element(inner_unwrapped.element):
+                    string_captures.add(name)
+                else:
+                    list_captures.add(name)
+            
+            # Extract based on grammar structure
+            ref_name = get_ref_name(inner_unwrapped)
+            
+            if ref_name:
+                # Rule reference capture - find the Rule node
+                rule_node = find_rule_node(tree, ref_name)
+                if rule_node:
+                    captures[name].append(hydrate_rule_node(rule_node, ref_name))
+            elif isinstance(inner_unwrapped, GrammarRepeat):
+                # Repeat capture
+                repeat_elem = inner_unwrapped.element
+                repeat_ref = get_ref_name(repeat_elem)
+                
+                if repeat_ref:
+                    # Repeat of Rules - find all rule nodes
+                    rule_nodes = find_all_rule_nodes(tree, repeat_ref)
+                    for rn in rule_nodes:
+                        captures[name].append(hydrate_rule_node(rn, repeat_ref))
+                else:
+                    # Repeat of terminals - find capture node and get text
+                    cap_node, cap_start, cap_end = find_capture_node(tree, name)
+                    if cap_node and cap_start < cap_end:
+                        captures[name].append(input_str[cap_start:cap_end])
+            else:
+                # Terminal capture (char class, literal, choice of terminals)
+                # Check if it's a compound choice that needs span expansion
+                compound_span = find_capture_span_for_compound(tree, name, inner_unwrapped)
+                if compound_span:
+                    cap_start, cap_end = compound_span
+                    if cap_start < cap_end:
+                        captures[name].append(input_str[cap_start:cap_end])
+                else:
+                    cap_node, cap_start, cap_end = find_capture_node(tree, name)
+                    if cap_node and cap_start < cap_end:
+                        captures[name].append(input_str[cap_start:cap_end])
+    
+    return captures, list_captures, string_captures
 
 
 def _extract_captures(
