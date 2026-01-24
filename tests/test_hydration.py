@@ -42,7 +42,7 @@ class TestStringLiterals:
     
     def test_captured_literal_choice(self):
         class Bool(Rule):
-            value: either["true", "false"]
+            value: either[r"true", r"false"]
         
         result_true = Bool("true")
         assert result_true.value == "true"
@@ -595,72 +595,47 @@ class TestEdgeCases:
 
 def test_json_null():
     """Test JSON null parsing."""
-    class JNull(Rule):
-        "null"
+    from turtles.examples.toy_json import JNull
     
     result = JNull("null")
     assert result._text == "null"
 
 def test_json_bool():
     """Test JSON bool parsing."""
-    class JBool(Rule):
-        value: either["true", "false"]
+    from turtles.examples.toy_json import JBool
     
     assert JBool("true").value == "true"
     assert JBool("false").value == "false"
 
 def test_json_number():
     """Test JSON number parsing."""
-    class JNumber(Rule):
-        value: repeat[char['0-9'], at_least[1]]
+    from turtles.examples.toy_json import JNumber  # full JSON number is more complex
     
     assert JNumber("123").value == "123"
 
 def test_json_string():
     """Test JSON string parsing."""
-    class JString(Rule):
-        '"'
-        value: repeat[char['a-zA-Z0-9_ ']]
-        '"'
+    from turtles.examples.toy_json import JString # full JSON string is more complex
     
     assert JString('"hello"').value == "hello"
 
 def test_json_simple_array():
     """Test JSON array with simple values."""
-    class JNumber(Rule):
-        value: repeat[char['0-9'], at_least[1]]
-    
-    class JArray(Rule):
-        '['
-        items: repeat[JNumber, separator[',']]
-        ']'
+    from turtles.examples.toy_json import JNumber, JArray
     
     result = JArray("[1,2,3]")
     assert len(result.items) == 3
+    assert isinstance(result.items[0], JNumber)
     assert result.items[0].value == "1"
+    assert isinstance(result.items[1], JNumber)
     assert result.items[1].value == "2"
+    assert isinstance(result.items[2], JNumber)
     assert result.items[2].value == "3"
 
 def test_json_simple_object():
     """Test JSON object with simple values."""
-    class JNumber(Rule):
-        value: repeat[char['0-9'], at_least[1]]
-    
-    class JString(Rule):
-        '"'
-        value: repeat[char['a-zA-Z0-9_']]
-        '"'
-    
-    class Pair(Rule):
-        key: JString
-        ':'
-        value: JNumber
-    
-    class JObject(Rule):
-        '{'
-        pairs: repeat[Pair, separator[',']]
-        '}'
-    
+    from turtles.examples.toy_json import JObject
+
     result = JObject('{"a":1,"b":2}')
     assert len(result.pairs) == 2
     assert result.pairs[0].key.value == "a"
@@ -670,52 +645,25 @@ def test_json_simple_object():
 
 def test_json_full_grammar():
     """Test full JSON grammar with union types."""
-    class FullNull(Rule):
-        "null"
-    
-    class FullBool(Rule):
-        value: either["true", "false"]
-    
-    class FullNumber(Rule):
-        value: repeat[char['0-9'], at_least[1]]
-    
-    class FullString(Rule):
-        '"'
-        value: repeat[char['a-zA-Z0-9_']]
-        '"'
-    
-    class FullArray(Rule):
-        '['
-        items: repeat[FullJSONValue, separator[',']]
-        ']'
-    
-    class FullPair(Rule):
-        key: FullString
-        ':'
-        value: FullJSONValue
-    
-    class FullObject(Rule):
-        '{'
-        pairs: repeat[FullPair, separator[',']]
-        '}'
-    
-    FullJSONValue = FullNull | FullBool | FullNumber | FullString | FullArray | FullObject
-    
+
+    from turtles.examples.toy_json import JSONValue, JObject, JString, JNull, JArray, JNumber, JBool
     # Test various values
-    assert isinstance(FullJSONValue("null"), FullNull)
-    assert isinstance(FullJSONValue("true"), FullBool)
-    assert isinstance(FullJSONValue("123"), FullNumber)
-    assert isinstance(FullJSONValue('"hello"'), FullString)
+    assert isinstance(JSONValue("null"), JNull)
+    assert isinstance(JSONValue("true"), JBool)
+    assert isinstance(JSONValue("123"), JNumber)
+    assert isinstance(JSONValue('"hello"'), JString)
     
     # Test array
-    arr = FullJSONValue("[1,2,3]")
-    assert isinstance(arr, FullArray)
+    arr = JSONValue("[1,2,3]")
+    assert isinstance(arr, JArray)
     assert len(arr.items) == 3
     
     # Test object
-    obj = FullJSONValue('{"a":1}')
-    assert isinstance(obj, FullObject)
+    obj = JSONValue('{"a":1}')
+    assert isinstance(obj, JObject)
     assert len(obj.pairs) == 1
+    assert obj.pairs[0].key.value == "a"
+    assert obj.pairs[0].value.value == "1"
 
 
 # =============================================================================
@@ -907,7 +855,7 @@ def test_toy_json():
     assert result.pairs[2].value.items[0].pairs[0].value.items[2].value == "6"
 
 
-def test_json():
+def test_full_json():
     from turtles.examples.json import JSON, JObject, JString, JNull, JArray, JNumber, JBool
 
     src = '''
