@@ -1213,6 +1213,9 @@ def _find_rule_in_tree(tree: 'ParseTree', rule_classes: dict[str, type]) -> type
     return None
 
 
+type AsDictResult = str | int | float | bool | dict[str, AsDictResult] | list[AsDictResult]
+
+
 # @dataclass_transform()
 class Rule(ABC, metaclass=RuleMeta):
     """initialize a token subclass as a dataclass"""
@@ -1256,6 +1259,44 @@ class Rule(ABC, metaclass=RuleMeta):
         if hasattr(self, '_text'):
             return f"{cls_name}({self._text!r})"
         return f"{cls_name}()"
+
+    def as_dict(self) -> AsDictResult:
+        cls = self.__class__
+        optional_fields: set[str] = set()
+        sequence = getattr(cls, "_sequence", None)
+        if isinstance(sequence, list):
+            for item in sequence:
+                if not isinstance(item, tuple) or len(item) != 3:
+                    continue
+                kind, var_name, annotation_text = item
+                if kind != "decl" or not isinstance(var_name, str) or not annotation_text:
+                    continue
+                normalized = annotation_text.replace(" ", "")
+                if normalized.startswith("optional[") or "|None" in normalized or "None|" in normalized:
+                    optional_fields.add(var_name)
+
+        def convert(value: str | int | float | bool | Rule | list | tuple) -> AsDictResult:
+            if isinstance(value, Rule):
+                return value.as_dict()
+            if isinstance(value, list):
+                return [convert(v) for v in value]
+            if isinstance(value, tuple):
+                return [convert(v) for v in value]
+            return value
+
+        fields: dict[str, AsDictResult] = {}
+        for key, value in self.__dict__.items():
+            if key.startswith("_"):
+                continue
+            if key in optional_fields and value == []:
+                continue
+            fields[key] = convert(value)
+
+        if fields:
+            return fields
+        if hasattr(self, "_mixin_value"):
+            return getattr(self, "_mixin_value")
+        return getattr(self, "_text", "")
     
     # Numeric operations for mixin types (int, float)
     def __int__(self) -> int:
