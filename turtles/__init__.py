@@ -25,3 +25,4 @@ from .backend.gll import (
     ParseTree,
     ParseError,
 )
+from .legacy import Turtle
