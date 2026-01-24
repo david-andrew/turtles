@@ -21,7 +21,7 @@ class JNumber(Rule):
 
 class JString(Rule):
     '"'
-    value: repeat[char['a-zA-Z0-9_ ']]
+    value: repeat[char[r"A-Za-z0-9 !#$%&'()*+,\-./:;<=>?@[]^_`{|}~"]]
     '"'
 
 class JArray(Rule):
