@@ -248,6 +248,21 @@ def clear_registry() -> None:
     _registry_by_name.clear()
 
 
+def clear_registry_for_file(source_file: str) -> None:
+    """Clear only rules from a specific source file."""
+    # Remove from location registry
+    keys_to_remove = [k for k, v in _registry_by_location.items() if v.source_file == source_file]
+    for k in keys_to_remove:
+        del _registry_by_location[k]
+    
+    # Remove from name registry
+    for name in list(_registry_by_name.keys()):
+        rules = _registry_by_name[name]
+        _registry_by_name[name] = [r for r in rules if r.source_file != source_file]
+        if not _registry_by_name[name]:
+            del _registry_by_name[name]
+
+
 # --- Annotation Parsing ---
 
 import ast

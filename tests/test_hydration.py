@@ -5,16 +5,21 @@ Tests all DSL patterns to ensure capture extraction works correctly
 for any grammar structure.
 """
 import pytest
-from turtles import Rule, char, repeat, at_least, at_most, exactly, either, sequence, optional, separator
+from pathlib import Path
+from turtles import Rule, char, repeat, at_least, at_most, exactly, either, sequence, optional, separator, clear_registry_for_file
 from turtles.easygrammar import _captured_locals
+
+_THIS_FILE = str(Path(__file__).resolve())
 
 
 @pytest.fixture(autouse=True)
-def clear_captured_locals():
-    """Clear the captured locals between tests to avoid state pollution."""
+def clear_test_state():
+    """Clear the grammar registry for this file and captured locals between tests to avoid state pollution."""
     _captured_locals.clear()
+    clear_registry_for_file(_THIS_FILE)
     yield
     _captured_locals.clear()
+    clear_registry_for_file(_THIS_FILE)
 
 
 # =============================================================================
@@ -76,6 +81,17 @@ class TestCharacterClasses:
         result = AlphaNum("abc123")
         assert result.first == "a"
         assert result.rest == "bc123"
+    
+    def test_greeting(self):
+        class Greeting(Rule):
+            "Hello, "
+            name: repeat[char['a-zA-Z'], at_least[1]]
+            "!"
+        
+        result = Greeting("Hello, World!")
+        assert result.name == "World"
+        result = Greeting("Hello, Alice!")
+        assert result.name == "Alice"
 
 
 class TestAnonymousVsCaptured:

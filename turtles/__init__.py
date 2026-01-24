@@ -16,6 +16,7 @@ from .grammar import (
     lookup_by_name,
     get_all_rules,
     clear_registry,
+    clear_registry_for_file,
 )
 from .backend.gll import (
     GLLParser,
