@@ -191,12 +191,23 @@ def lookup_by_name(name: str, from_file: str | None = None, from_line: int | Non
     return same_file[-1]
 
 
-def get_all_rules(*, all_files: bool = False) -> list[GrammarRule]:
+def get_rules_for_file(source_file: str) -> list[GrammarRule]:
+    """
+    Get all registered grammar rules defined in a specific file.
+    """
+    from .easygrammar import _auto_register_unions
+    _auto_register_unions()
+    
+    return [r for r in _registry_by_location.values() if r.source_file == source_file]
+
+
+def get_all_rules(*, all_files: bool = False, source_file: str | None = None) -> list[GrammarRule]:
     """
     Get all registered grammar rules.
     
     By default, returns only rules defined in the caller's file.
     Pass all_files=True to get rules from all files.
+    Pass source_file to get rules from a specific file.
     """
     import inspect
     
@@ -206,6 +217,9 @@ def get_all_rules(*, all_files: bool = False) -> list[GrammarRule]:
     
     if all_files:
         return list(_registry_by_location.values())
+    
+    if source_file is not None:
+        return [r for r in _registry_by_location.values() if r.source_file == source_file]
     
     # Get caller's filename
     frame = inspect.currentframe()

@@ -265,8 +265,15 @@ class RuleUnion[T]:
                 self._source_line or 0,
             )
         
-        # Get all registered rules
-        rules = get_all_rules(all_files=True)
+        # Get source file for the union
+        source_file = self._source_file
+        
+        # Ensure any RuleUnions from that file are registered
+        if source_file:
+            _auto_register_unions_for_file(source_file)
+        
+        # Get all registered rules from the union's source file
+        rules = get_all_rules(source_file=source_file)
         
         # Build disambiguation rules
         disambig = DisambiguationRules()
@@ -297,7 +304,7 @@ class RuleUnion[T]:
         if matched_cls is None:
             matched_cls = self.alternatives[0]  # fallback
         
-        return _hydrate_tree(tree, raw, matched_cls, grammar, rules)
+        return _hydrate_tree(tree, raw, matched_cls, grammar, rules, source_file=source_file)
     
     def _find_matched_alternative(self, tree: 'ParseTree', input_str: str) -> type['Rule'] | None:
         """Determine which alternative in the union was matched."""
@@ -329,6 +336,35 @@ def _auto_register_unions() -> None:
             source_file = value._source_file or ""
             source_line = value._source_line or 0
             value._register_with_name(name, source_file, source_line)
+
+
+def _auto_register_unions_for_file(source_file: str) -> None:
+    """
+    Register any unregistered RuleUnion objects from a specific source file.
+    
+    This is needed when importing Rules from another file - we need to ensure
+    all RuleUnions from that file are registered before parsing.
+    """
+    import sys
+    
+    # Find the module for this source file
+    source_module = None
+    for module in sys.modules.values():
+        if module is not None and hasattr(module, '__file__') and module.__file__ == source_file:
+            source_module = module
+            break
+    
+    if source_module is None:
+        return
+    
+    # Check all tracked unions from this file
+    for union in _all_rule_unions:
+        if union._grammar is None and union._source_file == source_file:
+            # Search the module's namespace for this union
+            for name, value in vars(source_module).items():
+                if value is union:
+                    union._register_with_name(name, source_file, union._source_line or 0)
+                    break
 
 
 class RuleMeta(ABCMeta):
@@ -374,8 +410,15 @@ class RuleMeta(ABCMeta):
         )
         from .grammar import get_all_rules, lookup_by_name
         
-        # Get all registered rules (from the caller's file by default)
-        rules = get_all_rules()
+        # Get all registered rules from the Rule's source file
+        # This allows Rules to be imported and used from different files
+        rule_source_file = None
+        if hasattr(cls, '_grammar') and cls._grammar is not None:
+            rule_source_file = cls._grammar.source_file
+            # Ensure any RuleUnions from that file are registered
+            _auto_register_unions_for_file(rule_source_file)
+        
+        rules = get_all_rules(source_file=rule_source_file)
         
         # Build disambiguation rules from class attributes if present
         disambig = DisambiguationRules()
@@ -403,12 +446,30 @@ class RuleMeta(ABCMeta):
         tree = parser.extract_tree(result)
         
         # Hydrate into Rule instance
-        return _hydrate_tree(tree, raw, cls, grammar, rules)
+        return _hydrate_tree(tree, raw, cls, grammar, rules, source_file=rule_source_file)
 
 
-def _build_rule_classes_map() -> dict[str, type]:
-    """Build a map from rule names to Rule classes."""
+def _build_rule_classes_map(source_file: str | None = None) -> dict[str, type]:
+    """Build a map from rule names to Rule classes.
+    
+    If source_file is provided, includes classes from that file's module.
+    """
+    import sys
+    
     rule_classes: dict[str, type] = {}
+    
+    # First, include classes from the source file's module if specified
+    if source_file is not None:
+        for module in sys.modules.values():
+            if module is not None and hasattr(module, '__file__') and module.__file__ == source_file:
+                for name, value in vars(module).items():
+                    if isinstance(value, type) and issubclass(value, Rule) and value is not Rule:
+                        rule_classes[value.__name__] = value
+                    elif isinstance(value, RuleUnion) and value._name:
+                        rule_classes[value._name] = value
+                break
+    
+    # Then add from captured vars (later entries override)
     all_vars = _get_all_captured_vars()
     for name, value in all_vars.items():
         if isinstance(value, type) and issubclass(value, Rule) and value is not Rule:
@@ -425,6 +486,7 @@ def _hydrate_tree(
     grammar: 'CompiledGrammar',
     rules: list,
     rule_classes: dict[str, type] | None = None,
+    source_file: str | None = None,
 ) -> object:
     """
     Hydrate a parse tree into a Rule instance.
@@ -434,7 +496,7 @@ def _hydrate_tree(
     
     # Build a map of rule names to classes on first call
     if rule_classes is None:
-        rule_classes = _build_rule_classes_map()
+        rule_classes = _build_rule_classes_map(source_file)
     
     # Get matched text
     text = tree.get_text(input_str)
