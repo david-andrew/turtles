@@ -595,33 +595,33 @@ class TestEdgeCases:
 
 def test_json_null():
     """Test JSON null parsing."""
-    from turtles.examples.toy_json import JNull
+    from turtles.examples.json_toy import JNull
     
     result = JNull("null")
     assert result._text == "null"
 
 def test_json_bool():
     """Test JSON bool parsing."""
-    from turtles.examples.toy_json import JBool
+    from turtles.examples.json_toy import JBool
     
     assert JBool("true").value == "true"
     assert JBool("false").value == "false"
 
 def test_json_number():
     """Test JSON number parsing."""
-    from turtles.examples.toy_json import JNumber  # full JSON number is more complex
+    from turtles.examples.json_toy import JNumber  # full JSON number is more complex
     
     assert JNumber("123").value == "123"
 
 def test_json_string():
     """Test JSON string parsing."""
-    from turtles.examples.toy_json import JString # full JSON string is more complex
+    from turtles.examples.json_toy import JString # full JSON string is more complex
     
     assert JString('"hello"').value == "hello"
 
 def test_json_simple_array():
     """Test JSON array with simple values."""
-    from turtles.examples.toy_json import JNumber, JArray
+    from turtles.examples.json_toy import JNumber, JArray
     
     result = JArray("[1,2,3]")
     assert len(result.items) == 3
@@ -634,7 +634,7 @@ def test_json_simple_array():
 
 def test_json_simple_object():
     """Test JSON object with simple values."""
-    from turtles.examples.toy_json import JObject
+    from turtles.examples.json_toy import JObject
 
     result = JObject('{"a":1,"b":2}')
     assert len(result.pairs) == 2
@@ -646,7 +646,7 @@ def test_json_simple_object():
 def test_json_full_grammar():
     """Test full JSON grammar with union types."""
 
-    from turtles.examples.toy_json import JSONValue, JObject, JString, JNull, JArray, JNumber, JBool
+    from turtles.examples.json_toy import JSONValue, JObject, JString, JNull, JArray, JNumber, JBool
     # Test various values
     assert isinstance(JSONValue("null"), JNull)
     assert isinstance(JSONValue("true"), JBool)
@@ -811,7 +811,7 @@ def test_json_with_whitespace():
 
 
 def test_toy_json():
-    from turtles.examples.toy_json import JSONValue, JObject, JArray, JString, JNumber, JBool, JNull
+    from turtles.examples.json_toy import JSONValue, JObject, JArray, JString, JNumber, JBool, JNull
 
     src = '{"A":{"a":null},"B":[true,false,1,2,3],"C":[{"d":[4,5,6]}]}'
 
@@ -923,6 +923,26 @@ def test_full_json():
     assert result.value.pairs[3].key == '"λ你好"'
     assert isinstance(result.value.pairs[3].value, JString)
     assert result.value.pairs[3].value == '"λ世界"'
+
+
+
+
+def test_semver():
+    from turtles.examples.semver import SemVer
+
+    result = SemVer('1.2.3-alpha+3.14')
+
+    assert result.major == '1'
+    assert result.minor == '2'
+    assert result.patch == '3'
+    assert result.prerelease is not None
+    assert result.prerelease.ids == ['alpha']
+    assert result.build is not None
+    assert result.build.ids == ['3', '14']
+
+
+
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

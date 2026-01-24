@@ -766,6 +766,40 @@ def _grammar_guided_extract(
                 return _hydrate_tree(node, input_str, cls, None, rules, rule_classes)
         return input_str[node.start:node.end]
     
+    # Track consumed nodes to avoid reusing the same node for multiple captures
+    consumed_nodes: set[int] = set()  # Set of node ids
+    
+    def find_next_rule_node(node: ParseTree, rule_name: str, skip_root: bool = True) -> ParseTree | None:
+        """Find the next unconsumed Rule node by name in document order."""
+        def _search(n: ParseTree, is_root: bool) -> ParseTree | None:
+            # Found exact match (but skip the root to avoid recursion issues)
+            if n.label == rule_name:
+                if is_root and skip_root:
+                    pass  # Skip root, search children instead
+                elif id(n) not in consumed_nodes:
+                    return n
+            
+            # Check compound labels (e.g., "Key+WS+Val")
+            if '+' in n.label and rule_name in n.label.split('+'):
+                for child in n.children:
+                    result = _search(child, False)
+                    if result:
+                        return result
+            
+            # Don't descend into other Rules (except the root)
+            if n.label in rule_classes and n.label != target_cls.__name__:
+                return None
+            
+            # Search children in order
+            for child in n.children:
+                result = _search(child, False)
+                if result:
+                    return result
+            
+            return None
+        
+        return _search(node, True)
+    
     # Analyze the grammar and extract captures
     if isinstance(grammar_rule.body, GrammarSequence):
         for elem in grammar_rule.body.elements:
@@ -792,9 +826,10 @@ def _grammar_guided_extract(
             ref_name = get_ref_name(inner_unwrapped)
             
             if ref_name:
-                # Rule reference capture - find the Rule node
-                rule_node = find_rule_node(tree, ref_name)
+                # Rule reference capture - find the next unconsumed Rule node
+                rule_node = find_next_rule_node(tree, ref_name)
                 if rule_node:
+                    consumed_nodes.add(id(rule_node))
                     captures[name].append(hydrate_rule_node(rule_node, ref_name))
             elif isinstance(inner_unwrapped, GrammarRepeat):
                 # Repeat capture
@@ -805,7 +840,9 @@ def _grammar_guided_extract(
                     # Repeat of Rules - find all rule nodes
                     rule_nodes = find_all_rule_nodes(tree, repeat_ref)
                     for rn in rule_nodes:
-                        captures[name].append(hydrate_rule_node(rn, repeat_ref))
+                        if id(rn) not in consumed_nodes:
+                            consumed_nodes.add(id(rn))
+                            captures[name].append(hydrate_rule_node(rn, repeat_ref))
                 else:
                     # Repeat of terminals - find capture node and get text
                     cap_node, cap_start, cap_end = find_capture_node(tree, name)
