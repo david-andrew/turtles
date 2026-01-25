@@ -87,7 +87,7 @@ print(repr(row))
 #             └── value: 0
 ```
 
-### A couple important notes
+### Important notes
 
 - Rules must be defined in a **real source file** (not a REPL / `exec`) because Turtles inspects source to build the grammar.
 - Named fields (e.g. `key: ...`) become attributes on the hydrated result.
@@ -95,7 +95,77 @@ print(repr(row))
 - `optional[...]` and `Rule | None` captures are omitted from `.as_dict()` when absent.
 - Repeats of terminals become strings; repeats of Rules become lists of hydrated Rule instances.
 
-### Parse errors
+## Type Mixins
+
+Rules can inherit from Python's built-in types (`int`, `str`, `float`, `bool`) to make parsed values behave like native types:
+
+```python
+from turtles import Rule, char, repeat, at_least, sequence
+
+class Integer(Rule, int):
+    value: '0' | sequence[char['1-9'], repeat[char['0-9']]]
+
+result = Integer("42")
+assert result == 42              # Compares as int
+assert isinstance(result, int)   # Type checks pass
+assert result + 8 == 50          # Arithmetic works
+assert result.as_dict() == 42    # as_dict() returns the int value
+
+# Fields are still accessible
+assert result.value == "42"
+```
+
+This is useful when you want parsed numeric or string values to integrate seamlessly with Python code.
+
+## Custom Converters
+
+For more complex transformations, define a `__convert__` method to transform parsed results into any Python type:
+
+```python
+from turtles import Rule, char, repeat, at_least
+
+class Point(Rule):
+    x: repeat[char['0-9'], at_least[1]]
+    ','
+    y: repeat[char['0-9'], at_least[1]]
+    
+    def __convert__(self):
+        return (int(self.x), int(self.y))
+
+result = Point("10,20")
+assert result == (10, 20)         # Compares as tuple
+assert result.__class__ is tuple  # Type is tuple
+assert result.as_dict() == (10, 20)
+
+# Original fields still accessible
+assert result.x == "10"
+assert result.y == "20"
+```
+
+The converter runs after hydration, so all fields are populated before `__convert__` is called. You can convert to any type: tuples, dataclasses, named tuples, custom classes, etc.
+
+```python
+from dataclasses import dataclass
+from turtles import Rule, char, repeat, at_least
+
+@dataclass
+class Coordinate:
+    x: int
+    y: int
+
+class CoordRule(Rule):
+    x: repeat[char['0-9'], at_least[1]]
+    ','
+    y: repeat[char['0-9'], at_least[1]]
+    
+    def __convert__(self):
+        return Coordinate(int(self.x), int(self.y))
+
+result = CoordRule("5,10")
+assert result == Coordinate(5, 10)
+```
+
+## Parse errors
 
 Turtles automatically outputs user-friendly modern-style error messages whenever an input fails to parse
 
@@ -122,33 +192,39 @@ Error: incomplete KV: missing key
   help: The input appears incomplete. Try adding "=".
 ```
 
-## Example grammars (in this repo)
+## Example grammars
 
-- `turtles/examples/semver.py`: semantic version parsing (`SemVer("1.2.3-alpha.1+build.5")`)
-- `turtles/examples/json_toy.py`: a small JSON subset (good for learning the DSL)
-- `turtles/examples/json.py`: a fuller RFC 8259 JSON grammar
-- `turtles/examples/csv.py`: RFC 4180 compliant CSV grammar (untested)
+The `turtles/examples/` directory contains complete grammar examples:
 
-> Feel free to open a pull request with any example grammars that might be valuable additions
+| File | Description |
+|------|-------------|
+| `semver.py` | Semantic versioning (`SemVer("1.2.3-alpha.1+build.5")`) |
+| `json_toy.py` | Minimal JSON subset (good for learning) |
+| `json.py` | Full RFC 8259 JSON grammar |
+| `csv.py` | RFC 4180 CSV grammar |
 
 The test suite is also a great source of patterns:
 
-- `tests/test_hydration.py`: coverage for hydration/captures across DSL constructs
-- `tests/test_as_dict.py`: examples of `.as_dict()` on ad-hoc + example grammars
+| File | Coverage |
+|------|----------|
+| `tests/test_hydration.py` | Field captures, repeats, optionals, unions, mixins, converters |
+| `tests/test_as_dict.py` | Serialization with `.as_dict()` |
+| `tests/test_csv.py` | Real-world CSV parsing scenarios |
 
-## Examples
+> Contributions welcome! Open a PR with new example grammars.
+
+## More Examples
+
 ### Semantic Versions
-```python
-from turtles import Rule, repeat, char, separator, at_least
 
-class SemVer(Rule):
-    major: NumId
-    "."
-    minor: NumId
-    "."
-    patch: NumId
-    prerelease: Prerelease|None
-    build: Build|None
+```python
+from turtles import Rule, repeat, char, separator, sequence, at_least
+
+class NumId(Rule):
+    id: '0' | sequence[char['1-9'], repeat[char['0-9']]]
+
+class Id(Rule):
+    id: repeat[char['a-zA-Z0-9-'], at_least[1]]
 
 class Prerelease(Rule):
     "-"
@@ -158,33 +234,34 @@ class Build(Rule):
     "+"
     ids: repeat[Id, separator['.'], at_least[1]]
 
-class NumId(Rule):
-    id: either[char['0'] | sequence[char['1-9'], repeat[char['0-9']]]]
+class SemVer(Rule):
+    major: NumId
+    "."
+    minor: NumId
+    "."
+    patch: NumId
+    prerelease: Prerelease | None
+    build: Build | None
 
-class Id(Rule):
-    id: repeat[char['a-zA-Z0-9'], at_least[1]]
 
-# parse a semver
-result = SemVer('1.2.3-alpha+3.14')
+result = SemVer('1.2.3-alpha+build.5')
 
-# results are in a convenient format
-result.major # NumId(id='1')
-result.minor # NumId(id='2')
-result.patch # NumId(id='3')
-result.prerelease # Prerelease(ids=['alpha'])
-result.build # Build(ids=['3', '14'])
-
-# convert to plain Python containers
-result.as_dict()
+assert result.major.id == '1'
+assert result.minor.id == '2'
+assert result.patch.id == '3'
+assert result.prerelease.ids[0].id == 'alpha'
+assert result.build.ids[0].id == 'build'
+assert result.build.ids[1].id == '5'
 ```
 
 
-### Toy JSON parser
+### Toy JSON Parser
+
 ```python
-from turtles import Rule, char, repeat, at_least, either, separator
+from turtles import Rule, char, repeat, at_least, separator
 
 class Whitespace(Rule):
-    repeat[char['\x20\t\n\r']]
+    repeat[char[' \t\n\r']]
 
 class Comma(Rule):
     Whitespace
@@ -195,14 +272,14 @@ class JNull(Rule):
     "null"
 
 class JBool(Rule):
-    value: either[r"true", r"false"]
+    value: "true" | "false"
 
 class JNumber(Rule):
     value: repeat[char['0-9'], at_least[1]]
 
 class JString(Rule):
     '"'
-    value: repeat[char[r"A-Za-z0-9 !#$%&'()*+,\-./:;<=>?@[]^_`{|}~"]]
+    value: repeat[char["A-Za-z0-9 !#$%&'()*+,-./:;<=>?@^_`{|}~"]]
     '"'
 
 class JArray(Rule):
@@ -226,29 +303,47 @@ class JObject(Rule):
     Whitespace
     '}'
 
+# Rule union - JSONValue can be any of these types
 JSONValue = JNull | JBool | JNumber | JString | JArray | JObject
 
 
-src = '{ "A": { "a": null }, "B": [ true, false, 1, 2, 3 ], "C": [ { "d": [ 4, 5, 6 ] } ] }'
+src = '{ "A": { "a": null }, "B": [ true, false, 1, 2, 3 ] }'
 result = JSONValue(src)
-print(repr(result)) # print out the parse result displaying the tree structure
-assert isinstance(result, JObject)
-assert len(result.pairs) == 3
-assert result.pairs[0].key == '"A"'
-assert isinstance(result.pairs[1].value, JArray)
-# etc. etc.
 
-# convert to plain Python containers
+assert isinstance(result, JObject)
+assert len(result.pairs) == 2
+assert result.pairs[0].key.value == "A"
+assert isinstance(result.pairs[1].value, JArray)
+
+# Tree visualization
+print(repr(result))
+
+# Convert to plain Python containers
 result.as_dict()
 ```
-> NOTE: this grammar is missing a lot of features from a full json grammar:
-> - doesn't support for float or scientific notation numbers
-> - allows invalid integer numbers with leading zeros
-> - doesn't support sign prefix (`+`/`-`) for numbers 
-> - doesn't support string escapes, nor the vast majority of valid unicode characters
 
+> **Note:** This is a simplified grammar. See `turtles/examples/json.py` for a complete RFC 8259 implementation with floats, escapes, and full unicode support.
+
+
+## DSL Reference
+
+| Construct | Description | Example |
+|-----------|-------------|---------|
+| `"literal"` | Match exact string | `"hello"` |
+| `char['a-z']` | Character class | `char['0-9A-Fa-f']` |
+| `repeat[X]` | Zero or more | `repeat[char['0-9']]` |
+| `repeat[X, at_least[n]]` | At least n | `repeat[char['a-z'], at_least[1]]` |
+| `repeat[X, separator[Y]]` | Separated list | `repeat[Item, separator[',']]` |
+| `optional[X]` | Zero or one | `optional[Sign]` |
+| `X \| None` | Optional rule | `prefix: Sign \| None` |
+| `A \| B \| C` | Rule union | `Value = Int \| Float \| String` |
+| `sequence[A, B]` | Explicit sequence | `sequence[char['1-9'], repeat[char['0-9']]]` |
+| `field: X` | Named capture | `value: repeat[char['0-9']]` |
+| `Rule, int` | Type mixin | `class Num(Rule, int): ...` |
+| `__convert__` | Custom converter | `def __convert__(self): return int(self.x)` |
 
 ## Backend
+
 Turtles uses a GLL (Generalized LL) parser backend.
 GLL is a general parsing algorithm for **arbitrary context-free grammars**, including grammars with ambiguity and left recursion, while still keeping the implementation reasonably small.
 
