@@ -1,5 +1,28 @@
+"""
+Domain-specific language (DSL) frontend for defining parsers.
+
+This module provides the core DSL for writing parsers in Turtles. Users define grammars
+by creating `Rule` subclasses, where the class body describes the grammar structure.
+Named fields become captured values in the parse result, and anonymous literals/patterns
+guide parsing without appearing in the result.
+
+The module handles:
+- Inspecting `Rule` class bodies and compiling them into context-free grammars
+- Hydrating parse trees back into `Rule` instances with captured fields populated
+- Providing helper functions (`char`, `repeat`, `optional`, etc.) for building grammars
+
+Example:
+```python
+class Int(Rule):
+    value: repeat[char["0-9"], at_least[1]]
+
+result = Int("42")
+assert result.value == "42"
+```
+"""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import final, Union, overload, TYPE_CHECKING
 from abc import ABC, ABCMeta
 import inspect
@@ -17,6 +40,22 @@ class SourceNotAvailableError(Exception):
     pass
 
 
+_TURTLES_PACKAGE_DIR = Path(__file__).resolve().parent
+_TURTLES_EXAMPLE_DIR = _TURTLES_PACKAGE_DIR / "examples"
+
+
+def _is_turtles_core_internal_frame(filename: str) -> bool:
+    if not filename or filename.startswith("<"):
+        return False
+    try:
+        path = Path(filename).resolve()
+        if not path.is_relative_to(_TURTLES_PACKAGE_DIR):
+            return False
+        return not path.is_relative_to(_TURTLES_EXAMPLE_DIR)
+    except Exception:
+        return False
+
+
 def _check_source_available() -> None:
     """
     Check that the module importing turtles has source code available.
@@ -28,7 +67,7 @@ def _check_source_available() -> None:
         while frame is not None:
             filename = frame.f_code.co_filename
             # skip frames from within the turtles package itself
-            if 'turtles' in filename and ('easygrammar' in filename or '__init__' in filename or 'grammar' in filename):
+            if _is_turtles_core_internal_frame(filename):
                 frame = frame.f_back
                 continue
             # skip importlib internals
@@ -51,12 +90,6 @@ def _check_source_available() -> None:
 _check_source_available()
 
 
-"""
-Notes:
-- optional should maybe just be the regular typing.Optional
-- __or__ for Rule|None should return Optional[Rule]
-"""
-
 _all_rule_unions: list['RuleUnion'] = []
 
 # Cache of local scopes captured at rule/union definition time
@@ -75,7 +108,7 @@ def _capture_caller_locals() -> None:
         caller = frame.f_back
         while caller:
             filename = caller.f_code.co_filename
-            if 'easygrammar.py' not in filename and 'grammar.py' not in filename:
+            if not _is_turtles_core_internal_frame(filename):
                 break
             caller = caller.f_back
         
@@ -106,11 +139,11 @@ def _get_all_captured_vars() -> dict[str, object]:
         while caller:
             filename = caller.f_code.co_filename
             # Skip turtles internals and Python/importlib internals
-            if ('easygrammar.py' not in filename and 
-                'grammar.py' not in filename and
-                'gll.py' not in filename and
-                'importlib' not in filename and
-                not filename.startswith('<frozen')):
+            if (
+                not _is_turtles_core_internal_frame(filename)
+                and 'importlib' not in filename
+                and not filename.startswith('<frozen')
+            ):
                 result.update(caller.f_locals)
                 result.update(caller.f_globals)
             caller = caller.f_back
@@ -152,7 +185,7 @@ class RuleUnion[T]:
             try:
                 # Walk up to find the first frame outside this module
                 caller = frame.f_back
-                while caller and 'easygrammar' in caller.f_code.co_filename:
+                while caller and _is_turtles_core_internal_frame(caller.f_code.co_filename):
                     caller = caller.f_back
                 if caller:
                     self._source_file = caller.f_code.co_filename

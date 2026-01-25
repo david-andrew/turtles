@@ -196,7 +196,7 @@ def get_rules_for_file(source_file: str) -> list[GrammarRule]:
     """
     Get all registered grammar rules defined in a specific file.
     """
-    from .easygrammar import _auto_register_unions
+    from .dsl import _auto_register_unions
     _auto_register_unions()
     
     return [r for r in _registry_by_location.values() if r.source_file == source_file]
@@ -213,7 +213,7 @@ def get_all_rules(*, all_files: bool = False, source_file: str | None = None) ->
     import inspect
     
     # Auto-register any RuleUnion objects from caller's scope
-    from .easygrammar import _auto_register_unions
+    from .dsl import _auto_register_unions
     _auto_register_unions()
     
     if all_files:
@@ -226,10 +226,10 @@ def get_all_rules(*, all_files: bool = False, source_file: str | None = None) ->
     frame = inspect.currentframe()
     try:
         caller = frame.f_back
-        # Walk up past any wrapper frames in grammar/easygrammar
+        # Walk up past any wrapper frames in grammar/dsl
         while caller:
             filename = caller.f_code.co_filename
-            if 'grammar.py' not in filename and 'easygrammar.py' not in filename:
+            if 'grammar.py' not in filename and 'dsl.py' not in filename:
                 break
             caller = caller.f_back
         

@@ -1,5 +1,5 @@
 # from .test import hello
-from .easygrammar import (
+from .dsl import (
     Rule,
     RuleUnion,
     AsDictResult,

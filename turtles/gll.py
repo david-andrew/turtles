@@ -1632,7 +1632,7 @@ def parse(
 
 def _test_math_expressions():
     """Test parsing math expressions with precedence and associativity."""
-    from ..grammar import GrammarRule, GrammarSequence, GrammarChoice, GrammarRef, GrammarLiteral, GrammarCharClass, GrammarCapture, GrammarRepeat
+    from .grammar import GrammarRule, GrammarSequence, GrammarChoice, GrammarRef, GrammarLiteral, GrammarCharClass, GrammarCapture, GrammarRepeat
     
     # Define grammar for math expressions
     # Expr ::= Add | Mul | Pow | Group | Num
@@ -1700,7 +1700,7 @@ def _test_math_expressions():
 
 def _test_semver():
     """Test parsing semantic versions."""
-    from ..grammar import GrammarRule, GrammarSequence, GrammarChoice, GrammarRef, GrammarLiteral, GrammarCharClass, GrammarCapture, GrammarRepeat
+    from .grammar import GrammarRule, GrammarSequence, GrammarChoice, GrammarRef, GrammarLiteral, GrammarCharClass, GrammarCapture, GrammarRepeat
     
     # SemVer ::= major '.' minor '.' patch prerelease? build?
     # major/minor/patch ::= NumId

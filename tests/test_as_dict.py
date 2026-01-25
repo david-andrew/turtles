@@ -12,9 +12,8 @@ from turtles import (
     separator,
     clear_registry_for_file,
 )
-from turtles.easygrammar import _captured_locals
-from turtles.examples.json_toy import JObject as ToyJObject
-from turtles.examples.json_toy import JArray as ToyJArray
+from turtles.dsl import _captured_locals
+from turtles.examples.json_toy import JObject as ToyJObject, JArray as ToyJArray
 from turtles.examples.semver import SemVer
 from turtles.examples.json import (
     JSON as FullJSON,

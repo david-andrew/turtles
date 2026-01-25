@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 from turtles import Rule, char, repeat, at_least, clear_registry_for_file
-from turtles.easygrammar import _captured_locals
+from turtles.dsl import _captured_locals
 
 _THIS_FILE = str(Path(__file__).resolve())
 
