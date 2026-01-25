@@ -2,7 +2,7 @@
 CSV grammar as defined by RFC 4180.
 Supports all CSV features: quoted fields, unquoted fields, empty fields, multiple record separators, etc.
 
-TODO: improve this grammar
+TODO: improve this grammar. a compelling example would be reading in a CSV and converting it to a pandas dataframe.
 """
 from __future__ import annotations
 
