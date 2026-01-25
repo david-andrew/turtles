@@ -95,9 +95,9 @@ print(repr(row))
 - `optional[...]` and `Rule | None` captures are omitted from `.as_dict()` when absent.
 - Repeats of terminals become strings; repeats of Rules become lists of hydrated Rule instances.
 
-### Parse errors (preview)
+### Parse errors
 
-Right now parse error output is very basic. The next planned feature is to integrate modern-style error messages via `prettyerr`.
+Turtles automatically outputs user-friendly modern-style error messages whenever an input fails to parse
 
 ```python
 from turtles import ParseError
@@ -108,16 +108,18 @@ except ParseError as e:
     print(e)
 ```
 
-Example output (subject to change):
+Example output:
 
 ```text
-ParseError: expected "=" at position 14
+Error: incomplete KV: missing key
 
-    ╭─[<input>:1:14]
+    ╭─[test.py:1:1]
   1 | not_a_kv_pair
-    ·              ┬
-    ·              ╰─ expected literal '=' after 'key' field in KV rule
+    · ┬           ╱╲
+    · │           ╰─ expected "="
+    · ╰─ Row started here
     ╰───
+  help: The input appears incomplete. Try adding "=".
 ```
 
 ## Example grammars (in this repo)
