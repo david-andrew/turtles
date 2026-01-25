@@ -1,6 +1,6 @@
 [project]
 name = "turtles"
-version = "2.0.4"
+version = "2.0.5"
 description = "Simple python DSL for parsing text"
 license = {  file = "LICENSE" }
 readme = "README.md"
