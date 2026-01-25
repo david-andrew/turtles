@@ -327,20 +327,22 @@ result.as_dict()
 
 ## DSL Reference
 
-| Construct | Description | Example |
-|-----------|-------------|---------|
-| `"literal"` | Match exact string | `"hello"` |
-| `char['a-z']` | Character class | `char['0-9A-Fa-f']` |
-| `repeat[X]` | Zero or more | `repeat[char['0-9']]` |
-| `repeat[X, at_least[n]]` | At least n | `repeat[char['a-z'], at_least[1]]` |
-| `repeat[X, separator[Y]]` | Separated list | `repeat[Item, separator[',']]` |
-| `optional[X]` | Zero or one | `optional[Sign]` |
-| `X \| None` | Optional rule | `prefix: Sign \| None` |
-| `A \| B \| C` | Rule union | `Value = Int \| Float \| String` |
-| `sequence[A, B]` | Explicit sequence | `sequence[char['1-9'], repeat[char['0-9']]]` |
-| `field: X` | Named capture | `value: repeat[char['0-9']]` |
-| `Rule, int` | Type mixin | `class Num(Rule, int): ...` |
-| `__convert__` | Custom converter | `def __convert__(self): return int(self.x)` |
+| Construct | Description | Example |  BNF Equivalent |
+|-----------|-----|-------------|---------|
+| `"literal"` | Match exact string | `"hello"` | `"hello"` | 
+| `char['a-z']` | Character class | `char['0-9A-Fa-f']` | `[0-9A-FA-F]` |
+| `repeat[X]` | Zero or more | `repeat[char['0-9']]` | `[0-9]*` |
+| `repeat[X, at_least[n]]` | At least n | `repeat[char['a-z'], at_least[1]]` |  `[a-z]+` / `[a-z]{1,}` |
+| `repeat[X, at_most[n]]` | At most n | `repeat[Int, at_most[10]]` |  `Int{0,10}` |
+| `repeat[X, exactly[n]]` | Exactl n | `repeat[Int, exactly[3]]` |  `Int{3,3}` |
+| `repeat[X, separator[Y]]` | Separated list | `repeat[Item, separator[',']]` |  `Item (',' Item)*` |
+| `optional[X]` | Zero or one | `optional[Sign]` |  `Sign?` |
+| `X \| None` | Optional rule | `prefix: Sign \| None` |  `Sign?` |
+| `A \| B \| C` |  Rule union | `Value = Int \| Float \| String` | `Int \| Float \| String` |
+| `sequence[A, B]` | Explicit sequence | `sequence[char['1-9'], repeat[char['0-9']]]` |  `[1-9] [0-9]` |
+| `field: X` |  Named capture | `value: repeat[char['0-9']]` | — |
+| `Rule, int` | Type mixin | `class Num(Rule, int): ...` | — |
+| `__convert__` | Custom converter | `def __convert__(self): return int(self.x)` | — |
 
 ## Backend
 
