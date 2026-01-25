@@ -62,6 +62,8 @@ class GSSNode:
     """
     slot: GrammarSlot | None  # None for the bottom of stack
     pos: int
+    called_rule: str | None = None  # The rule that was called at this point
+    call_start: int | None = None  # Where the called rule started
     
     def __repr__(self) -> str:
         if self.slot is None:
@@ -182,6 +184,7 @@ class ParseContext:
     field_name: str | None  # None for anonymous elements
     position: int  # Input position when this context started
     grammar_element: GrammarElement
+    matched_elements: list[str] = field(default_factory=list)  # Fields successfully parsed so far
     
     def __repr__(self) -> str:
         if self.field_name:
@@ -198,6 +201,31 @@ class FailureInfo:
     expected: list[ExpectedElement] = field(default_factory=list)
     contexts: list[ParseContext] = field(default_factory=list)
     partial_match_end: int = 0  # How far we got before failing
+
+
+@dataclass
+class ActiveContext:
+    """
+    Tracks an in-progress rule parse for accurate error context.
+    Unlike GSS-based tracking, this maintains the actual start position
+    and tracks which elements have been successfully matched.
+    """
+    rule_name: str
+    field_name: str | None
+    start_pos: int
+    end_pos: int | None = None  # Position where rule ended (if complete)
+    matched_elements: list[str] = field(default_factory=list)  # Fields/elements already parsed
+    is_complete: bool = False
+    
+    def __hash__(self) -> int:
+        return hash((self.rule_name, self.field_name, self.start_pos))
+    
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ActiveContext):
+            return False
+        return (self.rule_name == other.rule_name and 
+                self.field_name == other.field_name and
+                self.start_pos == other.start_pos)
 
 
 # =============================================================================
@@ -520,6 +548,13 @@ class GLLParser:
         self.expected_at_furthest.clear()
         self.contexts_at_furthest.clear()
         self._current_contexts.clear()
+        self._current_gss: GSSNode | None = None
+        
+        # Explicit context stack for accurate error tracking
+        # Maps descriptor key -> ActiveContext for tracking in-progress rules
+        self._active_contexts: dict[str, ActiveContext] = {}
+        # Track which elements matched at each position (for filtering expected)
+        self._matched_at_pos: dict[int, set[str]] = {}
     
     def _slot_key(self, slot: GrammarSlot) -> str:
         """Create a hashable key for a slot."""
@@ -530,11 +565,13 @@ class GLLParser:
         pos: int, 
         expected: ExpectedElement,
         context: ParseContext | None = None,
+        gss: 'GSSNode | None' = None,
     ) -> None:
         """
         Record a parse failure at the given position.
         If this is a new furthest position, reset and start fresh.
         If at the same furthest position, add to the set of expected elements.
+        Also captures parent contexts from the GSS for richer error messages.
         """
         if pos > self.furthest_pos:
             # New furthest position - reset tracking
@@ -543,10 +580,111 @@ class GLLParser:
             self.contexts_at_furthest.clear()
         
         if pos >= self.furthest_pos:
-            # Add to expected set
-            self.expected_at_furthest.add(expected)
+            # Check if this element was already matched just before this position
+            # If so, don't list it as expected (e.g., don't say "expected whitespace"
+            # if whitespace was just matched)
+            should_add = True
+            for prev_pos in range(max(0, pos - 5), pos):
+                if prev_pos in self._matched_at_pos:
+                    if expected.description in self._matched_at_pos[prev_pos]:
+                        should_add = False
+                        break
+            
+            if should_add:
+                self.expected_at_furthest.add(expected)
             if context and context not in self.contexts_at_furthest:
-                self.contexts_at_furthest.append(context)
+                # Check if this context's rule completed before the error position
+                ctx_key = f"{context.rule_name}:{context.position}"
+                skip_context = False
+                if ctx_key in self._active_contexts:
+                    actx = self._active_contexts[ctx_key]
+                    if actx.is_complete and actx.end_pos is not None and actx.end_pos < pos:
+                        skip_context = True
+                if not skip_context:
+                    self.contexts_at_furthest.append(context)
+            
+            # Walk up the GSS to capture parent contexts (where rules started)
+            # Use provided gss or fall back to current_gss
+            gss_to_use = gss or getattr(self, '_current_gss', None)
+            if gss_to_use:
+                self._capture_gss_contexts(gss_to_use)
+    
+    def _capture_gss_contexts(self, gss: 'GSSNode') -> None:
+        """
+        Capture context information for error reporting.
+        Uses the explicit active contexts for accurate position tracking,
+        falling back to GSS-based inference for rules not in active contexts.
+        """
+        error_pos = self.furthest_pos
+        
+        # First, collect contexts from the explicit active context tracking
+        # These have accurate start positions
+        active_ctxs = []
+        for ctx_key, active_ctx in self._active_contexts.items():
+            # Only include contexts that:
+            # 1. Started before the error position (are enclosing the error)
+            # 2. Are not marked complete, OR ended at/after the error position
+            #    (rules that completed BEFORE the error shouldn't be shown)
+            if active_ctx.start_pos <= error_pos:
+                if not active_ctx.is_complete:
+                    active_ctxs.append(active_ctx)
+                elif active_ctx.end_pos is not None and active_ctx.end_pos >= error_pos:
+                    # This rule contains the error (error is within start..end)
+                    active_ctxs.append(active_ctx)
+        
+        # Sort by start position (most recent/innermost first)
+        active_ctxs.sort(key=lambda c: -c.start_pos)
+        
+        # Convert to ParseContext and add
+        for active_ctx in active_ctxs:
+            ctx = ParseContext(
+                rule_name=active_ctx.rule_name,
+                field_name=active_ctx.field_name,
+                position=active_ctx.start_pos,
+                grammar_element=None,
+                matched_elements=active_ctx.matched_elements.copy(),
+            )
+            if ctx not in self.contexts_at_furthest:
+                self.contexts_at_furthest.append(ctx)
+        
+        # Fall back to GSS-based tracking for any additional context
+        # but only if we didn't find enough from active contexts
+        if len(self.contexts_at_furthest) < 2 and gss:
+            visited = set()
+            current = gss
+            
+            while current and id(current) not in visited:
+                visited.add(id(current))
+                
+                if current.called_rule and current.call_start is not None:
+                    # Skip if we already have this from active contexts
+                    already_have = any(
+                        c.rule_name == current.called_rule and c.position == current.call_start
+                        for c in self.contexts_at_furthest
+                    )
+                    # Also skip if this context completed BEFORE the error position
+                    ctx_key = f"{current.called_rule}:{current.call_start}"
+                    skip_completed = False
+                    if ctx_key in self._active_contexts:
+                        actx = self._active_contexts[ctx_key]
+                        if actx.is_complete and actx.end_pos is not None and actx.end_pos < error_pos:
+                            skip_completed = True
+                    
+                    if not already_have and not skip_completed:
+                        ctx = ParseContext(
+                            rule_name=current.called_rule,
+                            field_name=None,
+                            position=current.call_start,
+                            grammar_element=current.slot.element if current.slot else None,
+                        )
+                        if ctx not in self.contexts_at_furthest:
+                            self.contexts_at_furthest.append(ctx)
+                
+                edges = self.gss_edges.get(current, [])
+                if edges:
+                    current = edges[0].target
+                else:
+                    break
     
     def _get_failure_info(self) -> FailureInfo:
         """Get aggregated failure information."""
@@ -614,13 +752,36 @@ class GLLParser:
         if u_key not in self.U:
             self.U.add(u_key)
             self.R.append(desc)
+            
+            # Track active contexts for non-internal rules starting their first slot
+            rule_name = desc.slot.rule_name
+            if desc.slot.pos == 0 and not rule_name.startswith("_"):
+                ctx_key = f"{rule_name}:{desc.pos}"
+                if ctx_key not in self._active_contexts:
+                    self._active_contexts[ctx_key] = ActiveContext(
+                        rule_name=rule_name,
+                        field_name=None,
+                        start_pos=desc.pos,
+                    )
     
-    def _get_or_create_gss(self, slot: GrammarSlot | None, pos: int) -> GSSNode:
+    def _get_or_create_gss(
+        self, 
+        slot: GrammarSlot | None, 
+        pos: int,
+        called_rule: str | None = None,
+        call_start: int | None = None,
+    ) -> GSSNode:
         """Get or create a GSS node."""
         slot_repr = self._slot_key(slot) if slot else None
         key = (slot_repr, pos)
         if key not in self.gss_nodes:
-            self.gss_nodes[key] = GSSNode(slot, pos)
+            self.gss_nodes[key] = GSSNode(slot, pos, called_rule, call_start)
+        else:
+            # Update called_rule info if not set
+            node = self.gss_nodes[key]
+            if called_rule and not node.called_rule:
+                node.called_rule = called_rule
+                node.call_start = call_start
         return self.gss_nodes[key]
     
     def _get_or_create_sppf(self, label: str, start: int, end: int) -> SPPFNode:
@@ -630,15 +791,24 @@ class GLLParser:
             self.sppf_nodes[key] = SPPFNode(label, start, end)
         return self.sppf_nodes[key]
     
-    def _create(self, slot: GrammarSlot, gss: GSSNode, pos: int, sppf: SPPFNode | None) -> GSSNode:
+    def _create(
+        self, 
+        slot: GrammarSlot, 
+        gss: GSSNode, 
+        pos: int, 
+        sppf: SPPFNode | None,
+        called_rule: str | None = None,
+        call_start: int | None = None,
+    ) -> GSSNode:
         """
         Create a new GSS node or return existing one.
         Add edge from new/existing node to current node.
         Handle any pending pops.
         
         The slot is the continuation point (where to resume when the called rule returns).
+        called_rule and call_start track which rule was called and where it started.
         """
-        new_gss = self._get_or_create_gss(slot, pos)
+        new_gss = self._get_or_create_gss(slot, pos, called_rule, call_start)
         
         # Add edge
         if new_gss not in self.gss_edges:
@@ -726,6 +896,11 @@ class GLLParser:
             if end <= self.input_len and self.input[pos:end] == element.value:
                 sppf = self._get_or_create_sppf(f'"{element.value}"', pos, end)
                 sppf.families = [PackedNode(f'"{element.value}"', pos, [])]
+                # Track that this matched - at both start and end positions
+                # This helps filter expected elements when we fail after this match
+                if end not in self._matched_at_pos:
+                    self._matched_at_pos[end] = set()
+                self._matched_at_pos[end].add(f'"{element.value}"')
                 return (end, sppf)
             # Record failure
             self._record_failure(
@@ -749,6 +924,15 @@ class GLLParser:
             if matcher and matcher(char):
                 sppf = self._get_or_create_sppf(f"[{element.pattern}]", pos, pos + 1)
                 sppf.families = [PackedNode(char, pos, [])]
+                # Track that this matched at this position
+                # Used to filter expected elements if we later fail after this match
+                if pos not in self._matched_at_pos:
+                    self._matched_at_pos[pos] = set()
+                # Track both raw pattern and friendly name
+                self._matched_at_pos[pos].add(f"[{element.pattern}]")
+                # Also track friendly names for common patterns
+                if element.pattern in (' \t\n\r', '\x20\t\n\r', ' \t'):
+                    self._matched_at_pos[pos].add("whitespace")
                 return (pos + 1, sppf)
             # Record failure
             self._record_failure(
@@ -768,6 +952,9 @@ class GLLParser:
         gss = desc.gss
         current_sppf = desc.sppf
         
+        # Track current GSS for error context
+        self._current_gss = gss
+        
         # Handle synthetic final slots (complete parent rule and pop)
         if slot.rule_name.startswith("_final_"):
             # Extract parent rule name: _final_RuleName_pos
@@ -782,6 +969,14 @@ class GLLParser:
                     packed = PackedNode(parent_rule, start_pos, [])
                 if packed not in rule_sppf.families:
                     rule_sppf.families.append(packed)
+                
+                # Mark the parent rule as complete
+                if not parent_rule.startswith("_"):
+                    ctx_key = f"{parent_rule}:{start_pos}"
+                    if ctx_key in self._active_contexts:
+                        self._active_contexts[ctx_key].is_complete = True
+                        self._active_contexts[ctx_key].end_pos = pos
+                
                 self._pop(gss, rule_sppf)
             return
         
@@ -850,6 +1045,15 @@ class GLLParser:
                                     rep_element, separator, at_least, at_most,
                                     items_parsed, new_accumulated, capture_name, orig_desc, sep_pos
                                 )
+                            else:
+                                # Separator failed to match - record the expected separator
+                                sep_desc = self._separator_description(separator)
+                                if sep_desc:
+                                    self._record_failure(
+                                        pos,
+                                        ExpectedElement('literal', sep_desc, separator),
+                                        None,
+                                    )
                         elif isinstance(separator, GrammarRef):
                             # Complex separator - parse asynchronously
                             sep_rule = self.grammar.rules.get(separator.name)
@@ -887,6 +1091,13 @@ class GLLParser:
             if packed not in rule_sppf.families:
                 rule_sppf.families.append(packed)
             
+            # Mark the context as complete
+            if not slot.rule_name.startswith("_"):
+                ctx_key = f"{slot.rule_name}:{start_pos}"
+                if ctx_key in self._active_contexts:
+                    self._active_contexts[ctx_key].is_complete = True
+                    self._active_contexts[ctx_key].end_pos = pos
+            
             self._pop(gss, rule_sppf)
             return
         
@@ -914,7 +1125,10 @@ class GLLParser:
                     # Create return point
                     next_slot = self._next_slot(slot)
                     if next_slot:
-                        new_gss = self._create(next_slot, gss, pos, current_sppf)
+                        new_gss = self._create(
+                            next_slot, gss, pos, current_sppf,
+                            called_rule=element.name, call_start=pos
+                        )
                         self._add(Descriptor(first_slot, new_gss, pos, None))
             else:
                 # Rule not found - record expected
@@ -936,6 +1150,14 @@ class GLLParser:
                     capture_sppf = self._get_or_create_sppf(f":{element.name}", term_sppf.start, term_sppf.end)
                     capture_sppf.families = term_sppf.families[:]
                     combined = self._combine_sppf(current_sppf, capture_sppf)
+                    
+                    # Track this matched field in the active context
+                    if not element.name.startswith("_"):
+                        start_pos = current_sppf.start if current_sppf else pos
+                        ctx_key = f"{slot.rule_name}:{start_pos}"
+                        if ctx_key in self._active_contexts:
+                            self._active_contexts[ctx_key].matched_elements.append(element.name)
+                    
                     next_slot = self._next_slot(slot)
                     if next_slot:
                         self._add(Descriptor(next_slot, gss, new_pos, combined))
@@ -949,7 +1171,10 @@ class GLLParser:
                         next_slot = self._next_slot(slot)
                         if next_slot:
                             # Create a wrapper slot that will tag the result
-                            new_gss = self._create(next_slot, gss, pos, current_sppf)
+                            new_gss = self._create(
+                                next_slot, gss, pos, current_sppf,
+                                called_rule=inner.name, call_start=pos
+                            )
                             self._add(Descriptor(first_slot, new_gss, pos, None))
                 else:
                     # Rule not found - record expected
@@ -1003,32 +1228,19 @@ class GLLParser:
                         first_slot = called_slots[0]
                         next_slot = self._next_slot(desc.slot)
                         if next_slot:
-                            new_gss = self._create(next_slot, desc.gss, desc.pos, desc.sppf)
+                            new_gss = self._create(
+                                next_slot, desc.gss, desc.pos, desc.sppf,
+                                called_rule=alt.name, call_start=desc.pos
+                            )
                             self._add(Descriptor(first_slot, new_gss, desc.pos, None))
             elif isinstance(alt, GrammarSequence):
                 any_matched = True  # Could match, we'll try
                 # Inline sequence in choice
                 self._process_sequence(alt, desc, capture_name)
         
-        # If no terminal alternatives matched, record what was expected
-        if not any_matched:
-            # Build description of expected alternatives
-            alt_descs = []
-            for alt in choice.alternatives:
-                if isinstance(alt, GrammarLiteral):
-                    if alt.value:
-                        alt_descs.append(f'"{alt.value}"')
-                elif isinstance(alt, GrammarCharClass):
-                    alt_descs.append(f'[{alt.pattern}]')
-                elif isinstance(alt, GrammarRef):
-                    alt_descs.append(alt.name)
-            if alt_descs:
-                desc_str = " or ".join(alt_descs)
-                self._record_failure(
-                    desc.pos,
-                    ExpectedElement('rule', desc_str, choice),
-                    context,
-                )
+        # Individual terminal alternatives already record their own failures
+        # when they don't match, so we don't need to record a combined description
+        pass
     
     def _process_repeat(self, repeat: GrammarRepeat, desc: Descriptor, capture_name: str | None = None) -> None:
         """Process a repeat element."""
@@ -1075,6 +1287,16 @@ class GLLParser:
     def _is_simple_separator(self, separator: GrammarElement) -> bool:
         """Check if separator can be matched synchronously."""
         return isinstance(separator, (GrammarLiteral, GrammarCharClass))
+    
+    def _separator_description(self, separator: GrammarElement) -> str | None:
+        """Get a human-readable description of a separator."""
+        if isinstance(separator, GrammarLiteral):
+            return f'"{separator.value}"'
+        elif isinstance(separator, GrammarCharClass):
+            return f'[{separator.pattern}]'
+        elif isinstance(separator, GrammarRef):
+            return separator.name
+        return None
     
     def _parse_repeat_items(
         self,
@@ -1129,6 +1351,15 @@ class GLLParser:
                 if sep_pos is not None:
                     pos = sep_pos
                 else:
+                    # Record that we expected the separator
+                    if items_parsed < at_least or at_most is None or items_parsed < at_most:
+                        sep_desc = self._separator_description(separator)
+                        if sep_desc:
+                            self._record_failure(
+                                pos,
+                                ExpectedElement('literal', sep_desc, separator),
+                                None,
+                            )
                     return  # Can't continue without separator
             elif isinstance(separator, GrammarRef):
                 # Complex separator - parse asynchronously
@@ -1181,7 +1412,10 @@ class GLLParser:
                         items_parsed, capture_name, desc, accumulated_sppf
                     )
                     # Create GSS edge to continue at repeat continuation
-                    new_gss = self._create(cont_slot, desc.gss, pos, desc.sppf)
+                    new_gss = self._create(
+                        cont_slot, desc.gss, pos, desc.sppf,
+                        called_rule=element.name, call_start=pos
+                    )
                     self._add(Descriptor(first_slot, new_gss, pos, None))
         
         elif isinstance(element, GrammarChoice):
@@ -1229,7 +1463,10 @@ class GLLParser:
                         element, separator, at_least, at_most,
                         items_parsed, capture_name, orig_desc, accumulated_sppf
                     )
-                    new_gss = self._create(cont_slot, orig_desc.gss, pos, orig_desc.sppf)
+                    new_gss = self._create(
+                        cont_slot, orig_desc.gss, pos, orig_desc.sppf,
+                        called_rule=element.name, call_start=pos
+                    )
                     self._add(Descriptor(first_slot, new_gss, pos, None))
         elif isinstance(element, GrammarChoice):
             self._parse_repeat_choice(
@@ -1275,7 +1512,10 @@ class GLLParser:
                             choice, separator, at_least, at_most,
                             items_parsed, capture_name, desc, accumulated_sppf
                         )
-                        new_gss = self._create(cont_slot, desc.gss, pos, desc.sppf)
+                        new_gss = self._create(
+                            cont_slot, desc.gss, pos, desc.sppf,
+                            called_rule=alt.name, call_start=pos
+                        )
                         self._add(Descriptor(first_slot, new_gss, pos, None))
     
     def _process_sequence(self, seq: GrammarSequence, desc: Descriptor, capture_name: str | None = None) -> None:
@@ -1302,6 +1542,14 @@ class GLLParser:
                 packed = PackedNode(parent_rule, start_pos, [])
             if packed not in rule_sppf.families:
                 rule_sppf.families.append(packed)
+            
+            # Mark the parent rule as complete
+            if not parent_rule.startswith("_"):
+                ctx_key = f"{parent_rule}:{start_pos}"
+                if ctx_key in self._active_contexts:
+                    self._active_contexts[ctx_key].is_complete = True
+                    self._active_contexts[ctx_key].end_pos = desc.pos
+            
             self._pop(desc.gss, rule_sppf)
             return
         
@@ -1795,21 +2043,72 @@ class ParseFailureAnalyzer:
         else:
             return f"while parsing {ctx.rule_name}"
     
-    def generate_title(self) -> str:
-        """Generate the main error title."""
-        expected = self.describe_expected()
-        found = self.get_found_char()
+    def _is_meaningful_field(self, field_name: str | None) -> bool:
+        """Check if a field name is meaningful for error messages."""
+        if not field_name:
+            return False
+        # Skip internal/ignored fields (start with underscore)
+        if field_name.startswith('_'):
+            return False
+        return True
+    
+    def _get_best_context(self) -> ParseContext | None:
+        """Get the most informative context for error messages.
         
-        if len(expected) == 1:
-            return f"expected {expected[0]}, found {found}"
-        elif len(expected) > 1:
-            if len(expected) <= 3:
-                exp_str = " or ".join(expected)
+        Prefers contexts with meaningful field names over bare rules.
+        Also prefers parent contexts over leaf alternatives in unions.
+        """
+        contexts = self.failure_info.contexts
+        if not contexts:
+            return None
+        
+        # First, look for a context with a meaningful field name (most informative)
+        for ctx in reversed(contexts):
+            if self._is_meaningful_field(ctx.field_name):
+                return ctx
+        
+        # Otherwise, prefer contexts that aren't at the same position as the error
+        # (those are likely parent contexts, not failed alternatives)
+        error_pos = self.failure_info.position
+        for ctx in reversed(contexts):
+            if ctx.position < error_pos:
+                return ctx
+        
+        # Fall back to the most recent context
+        return contexts[-1]
+    
+    def generate_title(self) -> str:
+        """Generate the main error title.
+        
+        Focuses on WHAT was being parsed (context), not what was expected.
+        The pointer message will provide the specific expected elements.
+        """
+        ctx = self._get_best_context()
+        found = self.get_found_char()
+        at_end = self.failure_info.position >= len(self.input_str)
+        
+        if ctx:
+            rule_name = ctx.rule_name
+            field_name = ctx.field_name if self._is_meaningful_field(ctx.field_name) else None
+            
+            if at_end:
+                # Input ended unexpectedly
+                if field_name:
+                    return f"incomplete {rule_name}: missing {field_name}"
+                else:
+                    return f"incomplete {rule_name}"
             else:
-                exp_str = f"one of: {', '.join(expected[:3])}, ..."
-            return f"expected {exp_str}, found {found}"
+                # Found unexpected character
+                if field_name:
+                    return f"invalid {field_name} in {rule_name}"
+                else:
+                    return f"invalid {rule_name}"
+        
+        # Fallback if no context available
+        if at_end:
+            return "unexpected end of input"
         else:
-            return f"unexpected {found}"
+            return f"parse error"
     
     def generate_hint(self) -> str | None:
         """Generate a helpful hint for fixing the error."""
@@ -1826,11 +2125,10 @@ class ParseFailureAnalyzer:
             return "The input appears incomplete."
         
         # If we have context about what field was being parsed
-        if contexts:
-            ctx = contexts[-1]
-            if ctx.field_name:
-                if expected:
-                    return f"Check the value for `{ctx.field_name}` - expected {expected[0]}"
+        ctx = self._get_best_context()
+        if ctx and self._is_meaningful_field(ctx.field_name):
+            if expected:
+                return f"Check the value for `{ctx.field_name}` - expected {expected[0]}"
         
         return None
 
@@ -1915,7 +2213,11 @@ class ParseError(Exception):
         # Build pointer messages
         pointers = []
         
-        # Main error pointer
+        # Add context pointers FIRST (they appear above the error in output)
+        # Show where constructs started to provide surrounding context
+        self._add_context_pointers(pointers, analyzer, pos)
+        
+        # Main error pointer (added last so it appears at the bottom)
         expected = analyzer.describe_expected()
         if expected:
             if len(expected) <= 3:
@@ -1925,14 +2227,6 @@ class ParseError(Exception):
             pointers.append(Pointer(span=error_span, message=exp_msg))
         else:
             pointers.append(Pointer(span=error_span, message=f"unexpected {analyzer.get_found_char()}"))
-        
-        # Context pointer if available
-        ctx_desc = analyzer.get_context_description()
-        if ctx_desc and self.failure_info.contexts:
-            ctx = self.failure_info.contexts[-1]
-            if ctx.position < pos:
-                ctx_span = Span(ctx.position, min(ctx.position + 1, pos))
-                pointers.append(Pointer(span=ctx_span, message=ctx_desc))
         
         # Generate hint
         hint = analyzer.generate_hint()
@@ -1946,6 +2240,80 @@ class ParseError(Exception):
         )
         
         return str(report)
+    
+    def _add_context_pointers(
+        self,
+        pointers: list,
+        analyzer: 'ParseFailureAnalyzer',
+        error_pos: int,
+    ) -> None:
+        """Add context pointers showing where constructs started."""
+        from prettyerr import Pointer, Span
+        
+        contexts = self.failure_info.contexts
+        if not contexts:
+            return
+        
+        # Find meaningful contexts that started before the error
+        # (contexts at the same position are just failed alternatives)
+        seen_positions = set()
+        context_pointers = []
+        
+        for ctx in contexts:
+            # Skip contexts at or after the error position
+            if ctx.position >= error_pos:
+                continue
+            
+            # Skip contexts that started just 1-2 chars before the error
+            # These are likely failed alternatives at the same position
+            if error_pos - ctx.position <= 2:
+                continue
+            
+            # Skip duplicate positions
+            if ctx.position in seen_positions:
+                continue
+            
+            # Skip internal fields (starting with _)
+            if ctx.field_name and ctx.field_name.startswith('_'):
+                continue
+            
+            # Skip common utility rules that don't provide useful context
+            if ctx.rule_name in ('WS', 'Whitespace', '_ws'):
+                continue
+            
+            seen_positions.add(ctx.position)
+            
+            # Create a description for this context
+            if ctx.field_name:
+                msg = f"{ctx.rule_name}.{ctx.field_name} started here"
+            else:
+                msg = f"{ctx.rule_name} started here"
+            
+            # Add matched elements info if available
+            if ctx.matched_elements:
+                matched_str = ", ".join(f"`{e}`" for e in ctx.matched_elements[-3:])  # Last 3
+                msg += f" (parsed: {matched_str})"
+            
+            # Create span - just point to the start character
+            ctx_span = Span(ctx.position, ctx.position + 1)
+            context_pointers.append((ctx.position, Pointer(span=ctx_span, message=msg)))
+        
+        # Sort by position (most recent/closest to error first)
+        context_pointers.sort(key=lambda x: -x[0])
+        
+        # Prefer the context closest to the error (most specific)
+        # but also show an outer context for overall structure
+        if context_pointers:
+            # Add the most recent context (closest to error) - most relevant
+            pointers.append(context_pointers[0][1])
+            
+            # If there are outer contexts and the error is far from the innermost,
+            # add the outermost context for overall structure
+            if len(context_pointers) > 1:
+                last_ctx = context_pointers[-1]  # Outermost
+                first_pos = context_pointers[0][0]  # Innermost position
+                if first_pos > last_ctx[0] + 10:  # Only if meaningfully different
+                    pointers.append(last_ctx[1])
 
 
 def hydrate_rule(
