@@ -78,49 +78,50 @@ class TestBasicCSV:
 class TestEmptyFields:
     """Test handling of empty fields.
     
-    Note: Empty optional fields are represented as [] (empty list) in this parser.
+    Empty optional fields are represented as None, matching the type hint semantics
+    where optional[A] is equivalent to A | None.
     """
     
     def test_leading_empty_field(self):
         """Test record starting with empty field."""
         result = CSV(",a")
         record = result.records[0]
-        assert record.first == []  # Leading empty field
-        assert record.rest[0].field != []
+        assert record.first is None  # Leading empty field
+        assert record.rest[0].field is not None
         assert record.rest[0].field._text == "a"
     
     def test_trailing_empty_field(self):
         """Test record ending with empty field."""
         result = CSV("a,")
         record = result.records[0]
-        assert record.first != []
+        assert record.first is not None
         assert record.first._text == "a"
-        assert record.rest[0].field == []  # Trailing empty field
+        assert record.rest[0].field is None  # Trailing empty field
     
     def test_middle_empty_field(self):
         """Test empty field in the middle."""
         result = CSV("a,,b")
         record = result.records[0]
         assert record.first._text == "a"
-        assert record.rest[0].field == []  # Middle empty field
-        assert record.rest[1].field != []
+        assert record.rest[0].field is None  # Middle empty field
+        assert record.rest[1].field is not None
         assert record.rest[1].field._text == "b"
     
     def test_all_empty_fields(self):
         """Test record with all empty fields."""
         result = CSV(",,")
         record = result.records[0]
-        assert record.first == []
+        assert record.first is None
         assert len(record.rest) == 2
-        assert record.rest[0].field == []
-        assert record.rest[1].field == []
+        assert record.rest[0].field is None
+        assert record.rest[1].field is None
     
     def test_single_empty_field(self):
         """Test record with just one empty field (empty string input)."""
         result = CSV("")
         record = result.records[0]
         # Empty input means first field is empty
-        assert record.first == []
+        assert record.first is None
 
 
 # =============================================================================
@@ -138,7 +139,7 @@ class TestQuotedFields:
         """Test a simple quoted field."""
         result = CSV('"hello"')
         record = result.records[0]
-        assert record.first != []
+        assert record.first is not None
         assert isinstance(record.first, QuotedField)
         # _text includes the quotes
         assert record.first._text == '"hello"'
@@ -241,7 +242,7 @@ class TestRecordSeparators:
         """
         result = CSV("a\r\nb\r\nc")
         # Filter out empty records for comparison
-        non_empty = [r for r in result.records if r.first != []]
+        non_empty = [r for r in result.records if r.first is not None]
         assert len(non_empty) == 3
     
     def test_cr_separator(self):
@@ -358,19 +359,19 @@ class TestComplexExamples:
         result = CSV(csv_text)
         assert len(result.records) == 3
         # First record: empty, a, empty, empty
-        assert result.records[0].first == []  # Empty field
+        assert result.records[0].first is None  # Empty field
         assert result.records[0].rest[0].field._text == "a"
-        assert result.records[0].rest[1].field == []
-        assert result.records[0].rest[2].field == []
+        assert result.records[0].rest[1].field is None
+        assert result.records[0].rest[2].field is None
         # Second record: b, empty, c, empty
         assert result.records[1].first._text == "b"
-        assert result.records[1].rest[0].field == []
+        assert result.records[1].rest[0].field is None
         assert result.records[1].rest[1].field._text == "c"
-        assert result.records[1].rest[2].field == []
+        assert result.records[1].rest[2].field is None
         # Third record: all empty
-        assert result.records[2].first == []
-        assert result.records[2].rest[0].field == []
-        assert result.records[2].rest[1].field == []
+        assert result.records[2].first is None
+        assert result.records[2].rest[0].field is None
+        assert result.records[2].rest[1].field is None
 
 
 # =============================================================================

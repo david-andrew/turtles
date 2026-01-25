@@ -578,6 +578,20 @@ def _hydrate_tree(
         target_tree, input_str, target_cls, rules, rule_classes
     )
     
+    # Identify optional fields (those typed as optional[X] or X|None)
+    optional_fields: set[str] = set()
+    sequence = getattr(target_cls, "_sequence", None)
+    if isinstance(sequence, list):
+        for item in sequence:
+            if not isinstance(item, tuple) or len(item) != 3:
+                continue
+            kind, var_name, annotation_text = item
+            if kind != "decl" or not isinstance(var_name, str) or not annotation_text:
+                continue
+            normalized = annotation_text.replace(" ", "")
+            if normalized.startswith("optional[") or "|None" in normalized or "None|" in normalized:
+                optional_fields.add(var_name)
+    
     # Populate captured fields
     for name, capture_values in captures.items():
         if name in string_captures:
@@ -588,6 +602,9 @@ def _hydrate_tree(
             setattr(instance, name, capture_values)
         elif len(capture_values) == 1:
             setattr(instance, name, capture_values[0])
+        elif len(capture_values) == 0 and name in optional_fields:
+            # Empty optional field - use None instead of empty list
+            setattr(instance, name, None)
         else:
             setattr(instance, name, capture_values)
     
@@ -1304,7 +1321,8 @@ class Rule(ABC, metaclass=RuleMeta):
         for key, value in self.__dict__.items():
             if key.startswith("_"):
                 continue
-            if key in optional_fields and value == []:
+            # Skip empty optional fields (None or empty list for legacy)
+            if key in optional_fields and (value is None or value == []):
                 continue
             fields[key] = convert(value)
 
@@ -1516,8 +1534,8 @@ def tree_string(node: Rule) -> str:
         fields = []
         for key, value in obj.__dict__.items():
             if not key.startswith('_'):  # Skip private attributes
-                # Skip empty lists (empty optional fields)
-                if isinstance(value, list) and len(value) == 0:
+                # Skip None (empty optional fields) and empty lists (legacy)
+                if value is None or (isinstance(value, list) and len(value) == 0):
                     continue
                 fields.append((key, value))
         return fields

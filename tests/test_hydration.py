@@ -117,7 +117,7 @@ class TestAnonymousVsCaptured:
         
         # Without sign
         result = Exponent("e10")
-        assert result.sign == []
+        assert result.sign is None
         assert result.value == "10"
         
         # With sign
@@ -299,7 +299,7 @@ class TestOptional:
             value: repeat[char['0-9'], at_least[1]]
         
         result = SignedNum("42")
-        assert result.sign == []
+        assert result.sign is None
         assert result.value == "42"
     
     def test_optional_rule_present(self):
@@ -328,7 +328,7 @@ class TestOptional:
             ']'
         
         result = MaybeTagged("bar")
-        assert result.tag == []
+        assert result.tag is None
         assert result.value == "bar"
     
     def test_multiple_optionals(self):
@@ -349,10 +349,10 @@ class TestOptional:
         
         # Just integer
         r1 = Number("42")
-        assert r1.sign == []
+        assert r1.sign is None
         assert r1.whole == "42"
-        assert r1.frac == []
-        assert r1.exp == []
+        assert r1.frac is None
+        assert r1.exp is None
         
         # With sign
         r2 = Number("-42")
@@ -461,11 +461,11 @@ class TestRuleReferences:
             ')'
         
         result1 = RecNested("()")
-        assert result1.inner == []
+        assert result1.inner is None
         
         result2 = RecNested("(())")
         assert isinstance(result2.inner, RecNested)
-        assert result2.inner.inner == []
+        assert result2.inner.inner is None
         
         result3 = RecNested("((()))")
         assert isinstance(result3.inner.inner, RecNested)
@@ -512,7 +512,7 @@ class TestEdgeCases:
             value: repeat[char['0-9'], at_least[1]]
         
         result = ExpAnon("e10")
-        assert result.sign == []
+        assert result.sign is None
         assert result.value == "10"
     
     def test_compound_either_capture(self):
@@ -710,8 +710,8 @@ def test_full_json_number_integer():
     
     result = JNum1('42')
     assert result.whole.value == "42"
-    assert result.frac == []
-    assert result.exp == []
+    assert result.frac is None
+    assert result.exp is None
 
 def test_full_json_number_with_fraction():
     """Test full JSON number with fraction."""
@@ -760,7 +760,7 @@ def test_full_json_number_with_exponent():
     
     result = JNum3('1e10')
     assert isinstance(result.exp, JExp3)
-    assert result.exp.sign == []
+    assert result.exp.sign is None
     assert result.exp.value == "10"
 
 def test_full_json_number_complete():
