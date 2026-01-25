@@ -637,6 +637,35 @@ class TestCustomConverter:
         result = CoordRule("7,8")
         assert result == Coord(7, 8)
         assert result.__class__ is Coord
+    
+    def test_convert_to_bool(self):
+        """Test converting to boolean with proper truthiness."""
+        class BoolStr(Rule):
+            val: either['true', 'false']
+            
+            def __convert__(self):
+                return self.val == 'true'
+        
+        true_result = BoolStr("true")
+        false_result = BoolStr("false")
+        
+        # Check equality
+        assert true_result == True
+        assert false_result == False
+        
+        # Check __class__ returns bool
+        assert true_result.__class__ is bool
+        assert false_result.__class__ is bool
+        
+        # Check bool() works correctly (truthiness)
+        assert bool(true_result) is True
+        assert bool(false_result) is False
+        
+        # Check in conditional context
+        if false_result:
+            raise AssertionError("false_result should be falsy")
+        if not true_result:
+            raise AssertionError("true_result should be truthy")
 
 
 # =============================================================================

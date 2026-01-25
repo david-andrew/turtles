@@ -319,8 +319,14 @@ class RuleUnion[T]:
                 (r.__name__ if isinstance(r, type) else str(r)): assoc
                 for r, assoc in self.associativity.items()
             }
-        if self.longest_match:
-            disambig.longest_match.add(self._name)
+        
+        # Collect longest_match from ALL registered rules, not just the entry point
+        rule_classes = _build_rule_classes_map(source_file=source_file)
+        for rule_name, rule_cls in rule_classes.items():
+            if isinstance(rule_cls, type) and hasattr(rule_cls, 'longest_match') and rule_cls.longest_match:
+                disambig.longest_match.add(rule_name)
+            elif isinstance(rule_cls, RuleUnion) and hasattr(rule_cls, 'longest_match') and rule_cls.longest_match:
+                disambig.longest_match.add(rule_name)
         
         # Compile and parse
         grammar = CompiledGrammar.from_rules(rules)
@@ -475,8 +481,14 @@ class RuleMeta(ABCMeta):
                 (r.__name__ if isinstance(r, type) else str(r)): assoc
                 for r, assoc in cls.associativity.items()
             }
-        if hasattr(cls, 'longest_match') and cls.longest_match:
-            disambig.longest_match.add(cls.__name__)
+        
+        # Collect longest_match from ALL registered rules, not just the entry point
+        rule_classes = _build_rule_classes_map(source_file=rule_source_file)
+        for rule_name, rule_cls in rule_classes.items():
+            if isinstance(rule_cls, type) and hasattr(rule_cls, 'longest_match') and rule_cls.longest_match:
+                disambig.longest_match.add(rule_name)
+            elif isinstance(rule_cls, RuleUnion) and hasattr(rule_cls, 'longest_match') and rule_cls.longest_match:
+                disambig.longest_match.add(rule_name)
         
         # Compile grammar and parse
         grammar = CompiledGrammar.from_rules(rules)
@@ -1366,6 +1378,17 @@ class Rule(ABC, metaclass=RuleMeta):
         if val is not None:
             return val >= other
         return NotImplemented
+    
+    def __bool__(self) -> bool:
+        """Return boolean value of converted/mixin value."""
+        if hasattr(self, '_converted_value'):
+            return bool(self._converted_value)
+        if hasattr(self, '_mixin_value'):
+            return bool(self._mixin_value)
+        # Default: non-empty text is truthy
+        if hasattr(self, '_text'):
+            return bool(self._text)
+        return True
     
     def __str__(self) -> str:
         if hasattr(self, '_text'):
