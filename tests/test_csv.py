@@ -11,15 +11,8 @@ from pathlib import Path
 from turtles.examples.csv import (
     CSV,
     CSVSkipInitialSpace,
-    Record,
-    RecordSkipInitialSpace,
     QuotedField,
     UnquotedField,
-    Field,
-    BOM,
-    CRLF,
-    RecordSep,
-    Delim,
 )
 
 _THIS_FILE = str(Path(__file__).resolve())
