@@ -909,8 +909,33 @@ def _grammar_guided_extract(
                     cap_node, cap_start, cap_end = find_capture_node(tree, name)
                     if cap_node and cap_start < cap_end:
                         captures[name].append(input_str[cap_start:cap_end])
+            elif isinstance(inner_unwrapped, GrammarChoice):
+                # Choice with multiple rule alternatives (e.g., either[A, B, None])
+                # Look for any of the alternative rule references in the tree
+                found = False
+                for alt in inner_unwrapped.alternatives:
+                    if isinstance(alt, GrammarRef):
+                        alt_name = alt.name
+                        rule_node = find_next_rule_node(tree, alt_name)
+                        if rule_node:
+                            consumed_nodes.add(id(rule_node))
+                            captures[name].append(hydrate_rule_node(rule_node, alt_name))
+                            found = True
+                            break
+                
+                if not found:
+                    # Fall back to terminal capture (choice of terminals)
+                    compound_span = find_capture_span_for_compound(tree, name, inner_unwrapped)
+                    if compound_span:
+                        cap_start, cap_end = compound_span
+                        if cap_start < cap_end:
+                            captures[name].append(input_str[cap_start:cap_end])
+                    else:
+                        cap_node, cap_start, cap_end = find_capture_node(tree, name)
+                        if cap_node and cap_start < cap_end:
+                            captures[name].append(input_str[cap_start:cap_end])
             else:
-                # Terminal capture (char class, literal, choice of terminals)
+                # Terminal capture (char class, literal)
                 # Check if it's a compound choice that needs span expansion
                 compound_span = find_capture_span_for_compound(tree, name, inner_unwrapped)
                 if compound_span:
@@ -1143,6 +1168,24 @@ def _extract_captures(
                                         captures[capture_name].append(hydrated)
                                 else:
                                     captures[capture_name].append(input_str[node.start:node.end])
+                    
+                    elif isinstance(inner, GrammarChoice):
+                        # Handle choice with multiple rule alternatives (e.g., either[A, B, None])
+                        # Look for any of the alternative rule references in the tree
+                        if capture_name not in captures:
+                            captures[capture_name] = []
+                        for alt in inner.alternatives:
+                            if isinstance(alt, GrammarRef):
+                                alt_name = alt.name
+                                found_nodes = _find_nodes_by_label(tree, alt_name, rule_classes)
+                                for node in found_nodes:
+                                    if alt_name in rule_classes:
+                                        cls = rule_classes[alt_name]
+                                        if isinstance(cls, type) and issubclass(cls, Rule):
+                                            hydrated = _hydrate_tree(node, input_str, cls, grammar, rules, rule_classes)
+                                            captures[capture_name].append(hydrated)
+                                    else:
+                                        captures[capture_name].append(input_str[node.start:node.end])
     
     return captures, list_captures, string_captures
 

@@ -7,7 +7,7 @@ TODO: improve this grammar. a compelling example would be reading in a CSV and c
 from __future__ import annotations
 
 
-from turtles import Rule, char, repeat, at_least, optional
+from turtles import Rule, char, repeat, at_least, optional, separator, either
 
 # --- Bytes / misc ---
 class BOM(Rule):
@@ -25,7 +25,7 @@ class CR(Rule):
     "\r"
 
 RecordSep = CRLF | LF | CR
-
+RecordSep.longest_match = True
 
 # --- Delimiter (default comma) ---
 class Delim(Rule):
@@ -52,8 +52,13 @@ class QuotedChar(Rule):
 
 class QuotedField(Rule):
     '"'
-    value: repeat[EscapedQuote | QuotedChar]
+    content: QuotedFieldContent
     '"'
+# QuotedField.longest_match = True
+
+class QuotedFieldContent(Rule, str):
+    repeat[EscapedQuote | QuotedChar]
+# QuotedFieldContent.longest_match = True
 
 
 # --- Unquoted fields ---
@@ -76,11 +81,14 @@ class UnquotedChar(Rule):
 # This will naturally stop when it encounters a comma, newline, CR, or quote
 # because UnquotedChar excludes those characters.
 # Note: we require at_least[1] so that truly empty fields return None from optional[Field]
-class UnquotedField(Rule):
+class UnquotedField(Rule, str):
     value: repeat[UnquotedChar, at_least[1]]
+# UnquotedField.longest_match = True
 
+Field = QuotedField | UnquotedField | None
 
-Field = QuotedField | UnquotedField
+# class Field(Rule):
+#     value: either[QuotedField, UnquotedField, None]
 
 
 # --- Records (this is the key part to support empty fields cleanly) ---
@@ -93,22 +101,8 @@ Field = QuotedField | UnquotedField
 #
 # We structure this as: first field (optional), then zero or more delimiter+field pairs
 class Record(Rule):
-    first: optional[Field]
-    rest: repeat[DelimThenField]
+    fields: repeat[Field, separator[Delim]]
 
-class DelimThenField(Rule):
-    Delim
-    field: optional[Field]
-
-
-# Variant that allows spaces/tabs after commas (like skipinitialspace):
-class RecordSkipInitialSpace(Rule):
-    first: optional[Field]
-    rest: repeat[DelimThenFieldSkipSpace]
-
-class DelimThenFieldSkipSpace(Rule):
-    DelimSkipInitialSpace
-    field: optional[Field]
 
 
 # --- Top-level file ---
@@ -116,25 +110,19 @@ class DelimThenFieldSkipSpace(Rule):
 # First record has no leading separator; subsequent records require a separator before them.
 # This prevents trailing newlines from creating spurious empty records.
 
-# SepThenRecord: a separator followed by a record (for subsequent records)
-class SepThenRecord(Rule):
-    RecordSep
-    record: Record
 
 class CSV(Rule):
     optional[BOM]
-    first: Record
-    rest: repeat[SepThenRecord]
+    records: repeat[Record, separator[RecordSep]]
     optional[RecordSep]  # trailing separator
 
 
 # Variant that allows spaces/tabs after commas (like skipinitialspace):
-class SepThenRecordSkipSpace(Rule):
-    RecordSep
-    record: RecordSkipInitialSpace
+class RecordSkipInitialSpace(Rule):
+    fields: repeat[Field, separator[DelimSkipInitialSpace]]
+
 
 class CSVSkipInitialSpace(Rule):
     optional[BOM]
-    first: RecordSkipInitialSpace
-    rest: repeat[SepThenRecordSkipSpace]
+    records: repeat[RecordSkipInitialSpace, separator[RecordSep]]
     optional[RecordSep]  # trailing separator
