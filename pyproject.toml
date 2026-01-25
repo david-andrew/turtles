@@ -32,4 +32,4 @@ dev = [
 ]
 
 [tool.ruff]
-lint.ignore = ["E702"]
+lint.ignore = ["E701", "E702"]

@@ -27,16 +27,16 @@ class JFalse(Rule):
     "false"
 
 class JNumber(Rule):
-    sign: optional[either["+", "-"]]  # noqa
+    sign: optional[either[r"+", r"-"]]  # noqa
     integer: repeat[char['0-9'], at_least[1]]
-    fraction: optional['.', repeat[char['0-9'], at_least[1]]]  # noqa
+    fraction: optional[r'.', repeat[char['0-9'], at_least[1]]]  # noqa
 
 class JString(Rule):
     '"'
-    value: repeat[either[  # noqa
-        char['a-zA-Z0-9_ :/.@#$%^&*()\\-'],
-        r'\"',
-        r'\\',
+    value: repeat[either[
+        char['a-zA-Z0-9_ :/.@#$%^&*()\\-'], # noqa
+        r'\"', # noqa
+        r'\\', # noqa
     ]]
     '"'
 
@@ -104,7 +104,7 @@ def demo_char_class():
     print_header(2, "Character class mismatch")
     
     class Identifier(Rule):
-        value: repeat[char['a-zA-Z_'], at_least[1]]
+        value: repeat[char['a-zA-Z_'], at_least[1]]  # noqa
     
     try:
         Identifier("123invalid")
@@ -321,7 +321,7 @@ def demo_config_file_error():
     print_header(16, "Config file style error")
     
     class CfgKey(Rule):
-        value: repeat[char['a-zA-Z_'], at_least[1]]
+        value: repeat[char['a-zA-Z_'], at_least[1]]  # noqa
     
     class CfgNumber(Rule):
         value: repeat[char['0-9'], at_least[1]]
@@ -359,7 +359,7 @@ def demo_expression_error():
         value: repeat[char['0-9'], at_least[1]]
     
     class Op(Rule):
-        value: either["+", "-", "*", "/"]  # noqa
+        value: either[r"+", r"-", r"*", r"/"]  # noqa
     
     class Expr(Rule):
         first: Num

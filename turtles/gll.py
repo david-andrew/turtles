@@ -24,6 +24,10 @@ from .grammar import (
     GrammarRule,
 )
 
+from prettyerr import Error, Pointer, Span, SrcFile
+
+
+
 
 # =============================================================================
 # Core Data Structures
@@ -1202,14 +1206,12 @@ class GLLParser:
     def _process_choice(self, choice: GrammarChoice, desc: Descriptor, capture_name: str | None = None) -> None:
         """Process a choice element by trying all alternatives."""
         context = self._make_context(desc.slot, desc.pos, capture_name)
-        any_matched = False
         
         for i, alt in enumerate(choice.alternatives):
             # For each alternative, try to match it
             if isinstance(alt, (GrammarLiteral, GrammarCharClass)):
                 result = self._match_terminal(alt, desc.pos, context)
                 if result:
-                    any_matched = True
                     new_pos, term_sppf = result
                     if capture_name:
                         capture_sppf = self._get_or_create_sppf(f":{capture_name}", term_sppf.start, term_sppf.end)
@@ -1222,7 +1224,6 @@ class GLLParser:
             elif isinstance(alt, GrammarRef):
                 rule = self.grammar.rules.get(alt.name)
                 if rule:
-                    any_matched = True  # Could match, we'll try
                     called_slots = self.grammar.slots.get(alt.name, [])
                     if called_slots:
                         first_slot = called_slots[0]
@@ -1234,7 +1235,6 @@ class GLLParser:
                             )
                             self._add(Descriptor(first_slot, new_gss, desc.pos, None))
             elif isinstance(alt, GrammarSequence):
-                any_matched = True  # Could match, we'll try
                 # Inline sequence in choice
                 self._process_sequence(alt, desc, capture_name)
         
@@ -2084,7 +2084,6 @@ class ParseFailureAnalyzer:
         The pointer message will provide the specific expected elements.
         """
         ctx = self._get_best_context()
-        found = self.get_found_char()
         at_end = self.failure_info.position >= len(self.input_str)
         
         if ctx:
@@ -2108,7 +2107,7 @@ class ParseFailureAnalyzer:
         if at_end:
             return "unexpected end of input"
         else:
-            return f"parse error"
+            return "parse error"
     
     def generate_hint(self) -> str | None:
         """Generate a helpful hint for fixing the error."""
@@ -2116,7 +2115,6 @@ class ParseFailureAnalyzer:
             return None
         
         expected = self.describe_expected()
-        contexts = self.failure_info.contexts
         
         # If we're at end of input and expecting more
         if self.failure_info.position >= len(self.input_str):
@@ -2158,41 +2156,9 @@ class ParseError(Exception):
         full_message = self._format_error()
         super().__init__(full_message)
     
+
     def _format_error(self) -> str:
-        """Format the error message, using prettyerr if available."""
-        # Try to use prettyerr for nice formatting
-        if self.failure_info and self.grammar and self.start_rule:
-            try:
-                return self._format_with_prettyerr()
-            except Exception:
-                pass
-        
-        # Fallback to basic formatting
-        return self._format_basic()
-    
-    def _format_basic(self) -> str:
-        """Basic error formatting without prettyerr."""
-        line = self.input_str.count('\n', 0, self.position) + 1
-        last_newline = self.input_str.rfind('\n', 0, self.position)
-        col = self.position - last_newline
-        
-        context_start = max(0, self.position - 30)
-        context_end = min(len(self.input_str), self.position + 30)
-        context = self.input_str[context_start:context_end]
-        pointer_pos = self.position - context_start
-        
-        # Escape special characters in context
-        context = context.replace('\n', '\\n').replace('\t', '\\t')
-        
-        full_message = f"{self.message} at line {line}, column {col}\n"
-        full_message += f"  {context}\n"
-        full_message += f"  {' ' * pointer_pos}^"
-        
-        return full_message
-    
-    def _format_with_prettyerr(self) -> str:
         """Format error using prettyerr for rich output."""
-        from prettyerr import Error, Pointer, Span, SrcFile
         
         analyzer = ParseFailureAnalyzer(
             self.input_str,
@@ -2248,7 +2214,6 @@ class ParseError(Exception):
         error_pos: int,
     ) -> None:
         """Add context pointers showing where constructs started."""
-        from prettyerr import Pointer, Span
         
         contexts = self.failure_info.contexts
         if not contexts:
