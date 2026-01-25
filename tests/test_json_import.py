@@ -97,14 +97,8 @@ class TestJSONImport:
 class TestJSONComposition:
     """Test composing new rules from imported JSON rules."""
     
-    @pytest.mark.skip(reason="Cross-file rule composition not yet supported")
     def test_jsonl_parsing(self):
-        """Test JSONL (JSON Lines) format using imported JSON.
-        
-        NOTE: This test is skipped because composing rules across files
-        requires combining grammars from multiple source files, which
-        is not yet implemented.
-        """
+        """Test JSONL (JSON Lines) format using imported JSON."""
         from turtles import Rule, repeat, separator
         
         class JSONL(Rule):

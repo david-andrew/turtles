@@ -56,38 +56,58 @@ def _is_turtles_core_internal_frame(filename: str) -> bool:
         return False
 
 
-def _check_source_available() -> None:
+def _get_user_frame() -> tuple[str, int]:
     """
-    Check that the module importing turtles has source code available.
-    Raises SourceNotAvailableError if called from REPL, exec(), etc.
+    Find the first frame that represents user code (not turtles internals or importlib).
+    Returns (filename, lineno).
+    
+    This walks up the stack looking for the first frame that is:
+    - Not part of the turtles package (excluding examples)
+    - Not part of importlib
+    - Not a frozen module
     """
     frame = inspect.currentframe()
     try:
-        # Walk up the stack to find the first frame outside of the turtles package
         while frame is not None:
             filename = frame.f_code.co_filename
-            # skip frames from within the turtles package itself
+            lineno = frame.f_lineno
+            
+            # Skip frames from within the turtles package itself
             if _is_turtles_core_internal_frame(filename):
                 frame = frame.f_back
                 continue
-            # skip importlib internals
+            # Skip importlib internals and frozen modules
             if 'importlib' in filename or filename.startswith('<frozen'):
                 frame = frame.f_back
                 continue
-            # found the caller - check if it has source
-            if filename.startswith('<') or not filename:
-                raise SourceNotAvailableError(
-                    f"The turtles DSL requires source code to be available. "
-                    f"Cannot import from '{filename}'. "
-                    f"Please use turtles from a .py file, not from the REPL, exec(), or eval()."
-                )
-            # source is available
-            return
+            
+            # Found user code
+            return filename, lineno
+        return "", 0
     finally:
         del frame
 
 
-_check_source_available()
+def _check_not_in_repl(operation: str) -> None:
+    """
+    Raise SourceNotAvailableError if the immediate user code is in REPL/exec context.
+    
+    This checks where the grammar-building operation is being called from in user code,
+    not the entire call stack. This allows importing grammars in a REPL while preventing
+    definition of new grammars in the REPL.
+    
+    Args:
+        operation: Description of the operation being attempted (e.g., "create Rule union")
+    """
+    filename, _ = _get_user_frame()
+    
+    # Check if the user code is in a REPL/exec context
+    if filename.startswith('<') or not filename:
+        raise SourceNotAvailableError(
+            f"Cannot {operation} in REPL/exec context (detected '{filename}'). "
+            f"Grammar definitions must be in a .py file. "
+            f"You can import and use existing grammars from the REPL."
+        )
 
 
 _all_rule_unions: list['RuleUnion'] = []
@@ -162,12 +182,24 @@ class RuleUnion[T]:
         union.precedence = [HighestPriorityRule, ..., LowestPriorityRule]
         union.associativity = {Rule: 'left', OtherRule: 'right'}
     """
-    def __init__(self, alternatives: list[type['Rule']], *, _source_file: str | None = None, _source_line: int | None = None):
+    def __init__(
+        self, 
+        alternatives: list[type['Rule']], 
+        *, 
+        _source_files: set[str] | None = None, 
+        _source_line: int | None = None
+    ):
+        _check_not_in_repl("create Rule union")
         self.alternatives = alternatives
         self._name: str | None = None
         self._grammar: GrammarRule | None = None
-        self._source_file = _source_file
+        self._source_files: set[str] = _source_files.copy() if _source_files else set()
         self._source_line = _source_line
+        
+        # Collect source files from all alternatives
+        for alt in alternatives:
+            if alt is not None and hasattr(alt, '_grammar') and alt._grammar is not None:
+                self._source_files.add(alt._grammar.source_file)
         
         # Disambiguation rules
         self.precedence: list[type['Rule']] = []
@@ -180,19 +212,19 @@ class RuleUnion[T]:
         # Capture caller's locals so we can find the variable name later
         _capture_caller_locals()
         
-        # Capture source location if not provided
-        if _source_file is None:
-            frame = inspect.currentframe()
-            try:
-                # Walk up to find the first frame outside this module
-                caller = frame.f_back
-                while caller and _is_turtles_core_internal_frame(caller.f_code.co_filename):
-                    caller = caller.f_back
-                if caller:
-                    self._source_file = caller.f_code.co_filename
+        # Capture source location if not provided - add caller's file to source_files
+        frame = inspect.currentframe()
+        try:
+            # Walk up to find the first frame outside this module
+            caller = frame.f_back
+            while caller and _is_turtles_core_internal_frame(caller.f_code.co_filename):
+                caller = caller.f_back
+            if caller:
+                self._source_files.add(caller.f_code.co_filename)
+                if self._source_line is None:
                     self._source_line = caller.f_lineno
-            finally:
-                del frame
+        finally:
+            del frame
     
     @overload
     def __or__[U: Rule](self, other: type[U]) -> 'RuleUnion[T | U]': ...
@@ -201,25 +233,39 @@ class RuleUnion[T]:
     @overload
     def __or__(self, other: type[None]) -> 'RuleUnion[T | None]': ...
     def __or__(self, other):
+        _check_not_in_repl("create Rule union with '|' operator")
+        # Merge source files from both operands
+        new_files = set(self._source_files)
         if isinstance(other, RuleUnion):
+            new_files.update(other._source_files)
             return RuleUnion(self.alternatives + other.alternatives, 
-                           _source_file=self._source_file, _source_line=self._source_line)
+                           _source_files=new_files, _source_line=self._source_line)
         if other is type(None) or other is None:
             return RuleUnion(self.alternatives + [None],
-                           _source_file=self._source_file, _source_line=self._source_line)
+                           _source_files=new_files, _source_line=self._source_line)
+        # Add source file from the other Rule if available
+        if hasattr(other, '_grammar') and other._grammar is not None:
+            new_files.add(other._grammar.source_file)
         return RuleUnion(self.alternatives + [other],
-                        _source_file=self._source_file, _source_line=self._source_line)
+                        _source_files=new_files, _source_line=self._source_line)
     
     @overload
     def __ror__[U: Rule](self, other: type[U]) -> 'RuleUnion[U | T]': ...
     @overload
     def __ror__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[U | T]': ...
     def __ror__(self, other):
+        _check_not_in_repl("create Rule union with '|' operator")
+        # Merge source files from both operands
+        new_files = set(self._source_files)
         if isinstance(other, RuleUnion):
+            new_files.update(other._source_files)
             return RuleUnion(other.alternatives + self.alternatives,
-                           _source_file=self._source_file, _source_line=self._source_line)
+                           _source_files=new_files, _source_line=self._source_line)
+        # Add source file from the other Rule if available
+        if hasattr(other, '_grammar') and other._grammar is not None:
+            new_files.add(other._grammar.source_file)
         return RuleUnion([other] + self.alternatives,
-                        _source_file=self._source_file, _source_line=self._source_line)
+                        _source_files=new_files, _source_line=self._source_line)
     
     def _register_with_name(self, name: str, source_file: str, source_line: int) -> None:
         """Internal registration with explicit source info."""
@@ -291,21 +337,20 @@ class RuleUnion[T]:
                     a.__name__ if a is not None else "None" 
                     for a in self.alternatives
                 )
+            # Use first file from set for registration (or empty string)
+            primary_source = next(iter(self._source_files), "")
             self._register_with_name(
                 self._name,
-                self._source_file or "",
+                primary_source,
                 self._source_line or 0,
             )
         
-        # Get source file for the union
-        source_file = self._source_file
-        
-        # Ensure any RuleUnions from that file are registered
-        if source_file:
+        # Ensure any RuleUnions from all source files are registered
+        for source_file in self._source_files:
             _auto_register_unions_for_file(source_file)
         
-        # Get all registered rules from the union's source file
-        rules = get_all_rules(source_file=source_file)
+        # Get all registered rules from all source files in the union
+        rules = get_all_rules(source_files=self._source_files)
         
         # Build disambiguation rules
         disambig = DisambiguationRules()
@@ -321,7 +366,7 @@ class RuleUnion[T]:
             }
         
         # Collect longest_match from ALL registered rules, not just the entry point
-        rule_classes = _build_rule_classes_map(source_file=source_file)
+        rule_classes = _build_rule_classes_map(source_files=self._source_files)
         for rule_name, rule_cls in rule_classes.items():
             if isinstance(rule_cls, type) and hasattr(rule_cls, 'longest_match') and rule_cls.longest_match:
                 disambig.longest_match.add(rule_name)
@@ -336,6 +381,8 @@ class RuleUnion[T]:
         if result is None:
             # Get failure info from parser for detailed error message
             failure_info = parser._get_failure_info()
+            # Use first source file for error message
+            primary_source = next(iter(self._source_files), "<input>")
             raise ParseError(
                 f"Failed to parse as {self._name}",
                 failure_info.position,
@@ -343,7 +390,7 @@ class RuleUnion[T]:
                 failure_info=failure_info,
                 grammar=grammar,
                 start_rule=self._name,
-                source_name=self._source_file or "<input>",
+                source_name=primary_source,
             )
         
         # Extract tree and hydrate
@@ -354,7 +401,7 @@ class RuleUnion[T]:
         if matched_cls is None:
             matched_cls = self.alternatives[0]  # fallback
         
-        return _hydrate_tree(tree, raw, matched_cls, grammar, rules, source_file=source_file)
+        return _hydrate_tree(tree, raw, matched_cls, grammar, rules, source_files=self._source_files)
     
     def _find_matched_alternative(self, tree: 'ParseTree', input_str: str) -> type['Rule'] | None:
         """Determine which alternative in the union was matched."""
@@ -383,7 +430,8 @@ def _auto_register_unions() -> None:
     
     for name, value in all_vars.items():
         if isinstance(value, RuleUnion) and value._grammar is None:
-            source_file = value._source_file or ""
+            # Use first file from source_files set (or empty string)
+            source_file = next(iter(value._source_files), "")
             source_line = value._source_line or 0
             value._register_with_name(name, source_file, source_line)
 
@@ -409,7 +457,7 @@ def _auto_register_unions_for_file(source_file: str) -> None:
     
     # Check all tracked unions from this file
     for union in _all_rule_unions:
-        if union._grammar is None and union._source_file == source_file:
+        if union._grammar is None and source_file in union._source_files:
             # Search the module's namespace for this union
             for name, value in vars(source_module).items():
                 if value is union:
@@ -425,6 +473,7 @@ class RuleMeta(ABCMeta):
     @overload
     def __or__[T: Rule, U](cls: type[T], other: RuleUnion[U]) -> RuleUnion[T | U]: ...
     def __or__(cls, other):
+        _check_not_in_repl("create Rule union with '|' operator")
         if isinstance(other, RuleUnion):
             return RuleUnion([cls] + other.alternatives)
         if other is type(None) or other is None:
@@ -436,6 +485,7 @@ class RuleMeta(ABCMeta):
     @overload
     def __ror__[T: Rule, U](cls: type[T], other: RuleUnion[U]) -> RuleUnion[U | T]: ...
     def __ror__(cls, other):
+        _check_not_in_repl("create Rule union with '|' operator")
         if isinstance(other, RuleUnion):
             return RuleUnion(other.alternatives + [cls])
         return RuleUnion([other, cls])
@@ -458,15 +508,37 @@ class RuleMeta(ABCMeta):
         from .gll import CompiledGrammar, GLLParser, DisambiguationRules, ParseError
         from .grammar import get_all_rules
         
-        # Get all registered rules from the Rule's source file
-        # This allows Rules to be imported and used from different files
-        rule_source_file = None
+        # Collect source files from the Rule and any rules it references
+        source_files: set[str] = set()
         if hasattr(cls, '_grammar') and cls._grammar is not None:
-            rule_source_file = cls._grammar.source_file
-            # Ensure any RuleUnions from that file are registered
-            _auto_register_unions_for_file(rule_source_file)
+            source_files.add(cls._grammar.source_file)
         
-        rules = get_all_rules(source_file=rule_source_file)
+        # Also collect source files from any rules referenced in class annotations
+        # This enables cross-file composition when rules from other files are used
+        sequence = getattr(cls, '_sequence', None)
+        if isinstance(sequence, list):
+            for item in sequence:
+                if isinstance(item, tuple) and len(item) == 3 and item[0] == 'decl':
+                    # item is ("decl", field_name, annotation_text)
+                    # Check if the annotation refers to a known Rule with a grammar
+                    ann_text = item[2]
+                    if ann_text:
+                        # Try to find referenced rules in captured locals and modules
+                        for name, value in _get_all_captured_vars().items():
+                            if isinstance(value, type) and issubclass(value, Rule) and value is not Rule:
+                                if hasattr(value, '_grammar') and value._grammar is not None:
+                                    if name in ann_text:
+                                        source_files.add(value._grammar.source_file)
+                            elif isinstance(value, RuleUnion):
+                                if value._name and value._name in ann_text:
+                                    source_files.update(value._source_files)
+        
+        # Ensure any RuleUnions from those files are registered
+        for source_file in source_files:
+            _auto_register_unions_for_file(source_file)
+        
+        # Get all registered rules from all collected source files
+        rules = get_all_rules(source_files=source_files) if source_files else get_all_rules()
         
         # Build disambiguation rules from class attributes if present
         disambig = DisambiguationRules()
@@ -483,7 +555,7 @@ class RuleMeta(ABCMeta):
             }
         
         # Collect longest_match from ALL registered rules, not just the entry point
-        rule_classes = _build_rule_classes_map(source_file=rule_source_file)
+        rule_classes = _build_rule_classes_map(source_files=source_files)
         for rule_name, rule_cls in rule_classes.items():
             if isinstance(rule_cls, type) and hasattr(rule_cls, 'longest_match') and rule_cls.longest_match:
                 disambig.longest_match.add(rule_name)
@@ -498,7 +570,7 @@ class RuleMeta(ABCMeta):
         if result is None:
             # Get failure info from parser for detailed error message
             failure_info = parser._get_failure_info()
-            source_name = rule_source_file if rule_source_file else "<input>"
+            source_name = next(iter(source_files), "<input>") if source_files else "<input>"
             raise ParseError(
                 f"Failed to parse as {cls.__name__}",
                 failure_info.position,
@@ -513,28 +585,38 @@ class RuleMeta(ABCMeta):
         tree = parser.extract_tree(result)
         
         # Hydrate into Rule instance
-        return _hydrate_tree(tree, raw, cls, grammar, rules, source_file=rule_source_file)
+        return _hydrate_tree(tree, raw, cls, grammar, rules, source_files=source_files)
 
 
-def _build_rule_classes_map(source_file: str | None = None) -> dict[str, type]:
+def _build_rule_classes_map(
+    source_file: str | None = None,
+    source_files: set[str] | None = None,
+) -> dict[str, type]:
     """Build a map from rule names to Rule classes.
     
     If source_file is provided, includes classes from that file's module.
+    If source_files is provided, includes classes from all those files' modules.
     """
     import sys
     
     rule_classes: dict[str, type] = {}
     
-    # First, include classes from the source file's module if specified
-    if source_file is not None:
+    # Determine which files to include
+    files_to_include: set[str] = set()
+    if source_files is not None:
+        files_to_include = source_files
+    elif source_file is not None:
+        files_to_include = {source_file}
+    
+    # Include classes from the specified files' modules
+    if files_to_include:
         for module in sys.modules.values():
-            if module is not None and hasattr(module, '__file__') and module.__file__ == source_file:
+            if module is not None and hasattr(module, '__file__') and module.__file__ in files_to_include:
                 for name, value in vars(module).items():
                     if isinstance(value, type) and issubclass(value, Rule) and value is not Rule:
                         rule_classes[value.__name__] = value
                     elif isinstance(value, RuleUnion) and value._name:
                         rule_classes[value._name] = value
-                break
     
     # Then add from captured vars (later entries override)
     all_vars = _get_all_captured_vars()
@@ -554,6 +636,7 @@ def _hydrate_tree(
     rules: list,
     rule_classes: dict[str, type] | None = None,
     source_file: str | None = None,
+    source_files: set[str] | None = None,
 ) -> object:
     """
     Hydrate a parse tree into a Rule instance.
@@ -561,7 +644,7 @@ def _hydrate_tree(
     """    
     # Build a map of rule names to classes on first call
     if rule_classes is None:
-        rule_classes = _build_rule_classes_map(source_file)
+        rule_classes = _build_rule_classes_map(source_file=source_file, source_files=source_files)
     
     # Get matched text
     text = tree.get_text(input_str)
@@ -1338,6 +1421,25 @@ class Rule(ABC, metaclass=RuleMeta):
     def __init_subclass__(cls: 'type[Rule]', **kwargs) -> None:
         super().__init_subclass__(**kwargs)
 
+        # Check that the class is defined in a source file (not REPL/exec)
+        # We check the class's source file, not the call stack, because the class
+        # definition is what matters, not where the import started from
+        try:
+            source_file = inspect.getsourcefile(cls)
+            if not source_file:
+                raise SourceNotAvailableError(
+                    f"Cannot define Rule subclass '{cls.__name__}' in REPL/exec context. "
+                    f"Grammar definitions must be in a .py file. "
+                    f"You can import and use existing grammars from the REPL."
+                )
+            _, line_no = inspect.getsourcelines(cls)
+        except OSError as e:
+            raise SourceNotAvailableError(
+                f"Cannot define Rule subclass '{cls.__name__}' in REPL/exec context. "
+                f"Grammar definitions must be in a .py file. "
+                f"You can import and use existing grammars from the REPL."
+            ) from e
+
         # ensure that __init__ in this base class was not overridden
         # TODO: can this point to where the __init__ was overridden?
         if cls.__init__ != Rule.__init__:
@@ -1351,13 +1453,6 @@ class Rule(ABC, metaclass=RuleMeta):
         setattr(cls, "_sequence", sequence)
 
         # build grammar and register
-        try:
-            source_file = inspect.getsourcefile(cls) or ""
-            _, line_no = inspect.getsourcelines(cls)
-        except OSError:
-            source_file = ""
-            line_no = 0
-        
         grammar_rule = _build_grammar(cls.__name__, sequence, source_file, line_no)
         register_rule(grammar_rule)
         setattr(cls, "_grammar", grammar_rule)

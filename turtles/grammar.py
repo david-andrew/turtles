@@ -227,13 +227,19 @@ def get_rules_for_file(source_file: str) -> list[GrammarRule]:
     return [r for r in _registry_by_location.values() if r.source_file == source_file]
 
 
-def get_all_rules(*, all_files: bool = False, source_file: str | None = None) -> list[GrammarRule]:
+def get_all_rules(
+    *, 
+    all_files: bool = False, 
+    source_file: str | None = None,
+    source_files: set[str] | None = None,
+) -> list[GrammarRule]:
     """
     Get all registered grammar rules.
     
     By default, returns only rules defined in the caller's file.
     Pass all_files=True to get rules from all files.
     Pass source_file to get rules from a specific file.
+    Pass source_files to get rules from multiple specific files.
     """
     import inspect
     
@@ -243,6 +249,9 @@ def get_all_rules(*, all_files: bool = False, source_file: str | None = None) ->
     
     if all_files:
         return list(_registry_by_location.values())
+    
+    if source_files is not None:
+        return [r for r in _registry_by_location.values() if r.source_file in source_files]
     
     if source_file is not None:
         return [r for r in _registry_by_location.values() if r.source_file == source_file]
