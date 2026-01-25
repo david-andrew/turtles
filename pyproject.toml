@@ -4,9 +4,11 @@ version = "2.0.1"
 description = "Simple python DSL for parsing text"
 readme = "README.md"
 authors = [{ name = "David Samson", email = "david.andrew.engineer@gmail.com" }]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 classifiers = [
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [

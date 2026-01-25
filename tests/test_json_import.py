@@ -1,4 +1,6 @@
 """Test that JSON grammar can be imported and used from a different file."""
+from __future__ import annotations
+
 import pytest
 from turtles.examples.json import JSON, JObject, JArray, JString, JNumber
 

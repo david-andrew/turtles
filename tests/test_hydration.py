@@ -4,6 +4,8 @@ Comprehensive test suite for grammar hydration.
 Tests all DSL patterns to ensure capture extraction works correctly
 for any grammar structure.
 """
+from __future__ import annotations
+
 import pytest
 from pathlib import Path
 from turtles import Rule, char, repeat, at_least, at_most, exactly, either, sequence, optional, separator, clear_registry_for_file

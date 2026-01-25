@@ -1,6 +1,8 @@
 """
 Tests for handling ambiguous grammars with precedence and associativity.
 """
+from __future__ import annotations
+
 import pytest
 from pathlib import Path
 from turtles import Rule, char, repeat, at_least, exactly, separator, either, sequence, optional, clear_registry_for_file

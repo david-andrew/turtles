@@ -8,6 +8,8 @@ Missing Features:
 - sign prefix (`+`/`-`) for numbers 
 - strings don't support escapes, nor the vast majority of valid unicode characters
 """
+from __future__ import annotations
+
 from turtles import Rule, char, repeat, at_least, either, separator
 
 class JNull(Rule):

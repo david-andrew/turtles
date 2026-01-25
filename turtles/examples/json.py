@@ -2,6 +2,8 @@
 Full JSON grammar as defined by RFC 8259.
 Supports all JSON types: null, boolean, number, string, array, object.
 """
+from __future__ import annotations
+
 from turtles import Rule, char, repeat, at_least, exactly, separator, either, sequence, optional
 
 

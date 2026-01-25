@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from turtles import Rule, char, repeat, at_least, separator, either, optional, sequence
 
 class SemVer(Rule):
