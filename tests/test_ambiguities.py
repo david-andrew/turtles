@@ -317,5 +317,94 @@ class TestIdentifierExpressions:
         assert result.right.right._text == "z"
 
 
+# =============================================================================
+# Longest Match Disambiguation Tests
+# =============================================================================
+
+class TestLongestMatch:
+    """Test longest-match disambiguation."""
+    
+    def test_crlf_preferred_over_cr(self):
+        """CRLF should be preferred over CR when longest_match is enabled."""
+        class CRLF(Rule):
+            "\r\n"
+        
+        class LF(Rule):
+            "\n"
+        
+        class CR(Rule):
+            "\r"
+        
+        RecordSep = CRLF | LF | CR
+        RecordSep.longest_match = True
+        
+        class Line(Rule):
+            sep: RecordSep
+            rest: repeat[char['a-z']]
+        
+        result = Line("\r\nabc")
+        assert isinstance(result.sep, CRLF)
+        assert result.rest == "abc"
+    
+    def test_crlf_without_longest_match(self):
+        """Without longest_match, CR might be chosen (implementation dependent)."""
+        class CRLF2(Rule):
+            "\r\n"
+        
+        class LF2(Rule):
+            "\n"
+        
+        class CR2(Rule):
+            "\r"
+        
+        RecordSep2 = CRLF2 | LF2 | CR2
+        
+        class Line2(Rule):
+            sep: RecordSep2
+            rest: repeat[char['a-z\n']]
+        
+        result = Line2("\r\nabc")
+        assert result._text == "\r\nabc"
+    
+    def test_longest_match_on_rule_class(self):
+        """Test longest_match on a Rule class (not union)."""
+        class Greeting(Rule):
+            word: repeat[char['a-z'], at_least[1]]
+        
+        Greeting.longest_match = True
+        
+        class Sentence(Rule):
+            greeting: Greeting
+            rest: repeat[char['a-z ']]
+        
+        result = Sentence("hello world")
+        assert result.greeting.word == "hello"
+        assert result.rest == " world"
+    
+    def test_multiple_separators(self):
+        """Test with multiple record separators in sequence."""
+        class CRLF3(Rule):
+            "\r\n"
+        
+        class LF3(Rule):
+            "\n"
+        
+        class CR3(Rule):
+            "\r"
+        
+        RecordSep3 = CRLF3 | LF3 | CR3
+        RecordSep3.longest_match = True
+        
+        class Lines(Rule):
+            first: repeat[char['a-z'], at_least[1]]
+            sep: RecordSep3
+            second: repeat[char['a-z'], at_least[1]]
+        
+        result = Lines("abc\r\ndef")
+        assert result.first == "abc"
+        assert isinstance(result.sep, CRLF3)
+        assert result.second == "def"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

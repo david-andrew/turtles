@@ -241,11 +241,13 @@ Associativity = Literal['left', 'right', 'none']
 
 @dataclass
 class DisambiguationRules:
-    """Container for disambiguation rules: priority and associativity."""
+    """Container for disambiguation rules: priority, associativity, and longest match."""
     # Priority: list of rule names from highest to lowest precedence
     priority: list[str] = field(default_factory=list)
     # Associativity per rule name
     associativity: dict[str, Associativity] = field(default_factory=dict)
+    # Rules that should prefer longer matches
+    longest_match: set[str] = field(default_factory=set)
     
     def get_priority(self, rule_name: str) -> int:
         """
@@ -1868,10 +1870,10 @@ class GLLParser:
         scored.sort(key=lambda x: x[0])
         return scored[0][1]
     
-    def _score_family(self, family: PackedNode, parent: SPPFNode) -> tuple[int, int, int]:
+    def _score_family(self, family: PackedNode, parent: SPPFNode) -> tuple[int, int, int, int]:
         """
         Score a family for disambiguation.
-        Returns (priority_score, associativity_score, arbitrary_tiebreaker).
+        Returns (priority_score, associativity_score, longest_match_score, arbitrary_tiebreaker).
         Lower scores are preferred.
         """
         # Extract rule name from slot
@@ -1917,7 +1919,13 @@ class GLLParser:
                 right_size = family.children[-1].end - family.children[-1].start
                 assoc_score = left_size - right_size  # Prefer larger right
         
-        return (priority, assoc_score, id(family))
+        # Longest match score: prefer larger spans for children marked as longest_match
+        longest_score = 0
+        for child in family.children:
+            if child.label in self.disambig.longest_match:
+                longest_score -= (child.end - child.start)
+        
+        return (priority, assoc_score, longest_score, id(family))
 
 
 # =============================================================================

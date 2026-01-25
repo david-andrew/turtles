@@ -172,6 +172,7 @@ class RuleUnion[T]:
         # Disambiguation rules
         self.precedence: list[type['Rule']] = []
         self.associativity: dict[type['Rule'], str] = {}
+        self.longest_match: bool = False
         
         # Track for auto-discovery
         _all_rule_unions.append(self)
@@ -318,6 +319,8 @@ class RuleUnion[T]:
                 (r.__name__ if isinstance(r, type) else str(r)): assoc
                 for r, assoc in self.associativity.items()
             }
+        if self.longest_match:
+            disambig.longest_match.add(self._name)
         
         # Compile and parse
         grammar = CompiledGrammar.from_rules(rules)
@@ -472,6 +475,8 @@ class RuleMeta(ABCMeta):
                 (r.__name__ if isinstance(r, type) else str(r)): assoc
                 for r, assoc in cls.associativity.items()
             }
+        if hasattr(cls, 'longest_match') and cls.longest_match:
+            disambig.longest_match.add(cls.__name__)
         
         # Compile grammar and parse
         grammar = CompiledGrammar.from_rules(rules)
