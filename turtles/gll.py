@@ -150,6 +150,57 @@ class Descriptor:
 
 
 # =============================================================================
+# Error Tracking Data Structures
+# =============================================================================
+
+@dataclass
+class ExpectedElement:
+    """
+    What the parser expected to see at a particular position.
+    Used for generating helpful error messages.
+    """
+    kind: Literal['literal', 'char_class', 'rule', 'end_of_input']
+    description: str  # Human-readable description
+    grammar_element: GrammarElement | None = None
+    
+    def __hash__(self) -> int:
+        return hash((self.kind, self.description))
+    
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ExpectedElement):
+            return False
+        return self.kind == other.kind and self.description == other.description
+
+
+@dataclass
+class ParseContext:
+    """
+    A frame in the parse stack showing what rule/field was being parsed.
+    Used to provide context in error messages.
+    """
+    rule_name: str
+    field_name: str | None  # None for anonymous elements
+    position: int  # Input position when this context started
+    grammar_element: GrammarElement
+    
+    def __repr__(self) -> str:
+        if self.field_name:
+            return f"ParseContext({self.rule_name}.{self.field_name} @ {self.position})"
+        return f"ParseContext({self.rule_name} @ {self.position})"
+
+
+@dataclass
+class FailureInfo:
+    """
+    Aggregated information about parse failure at the furthest position.
+    """
+    position: int
+    expected: list[ExpectedElement] = field(default_factory=list)
+    contexts: list[ParseContext] = field(default_factory=list)
+    partial_match_end: int = 0  # How far we got before failing
+
+
+# =============================================================================
 # Disambiguation Rules
 # =============================================================================
 
@@ -441,6 +492,12 @@ class GLLParser:
         
         # SPPF nodes (for sharing)
         self.sppf_nodes: dict[tuple[str, int, int], SPPFNode] = {}
+        
+        # Error tracking state
+        self.furthest_pos: int = 0
+        self.expected_at_furthest: set[ExpectedElement] = set()
+        self.contexts_at_furthest: list[ParseContext] = []
+        self._current_contexts: list[ParseContext] = []  # Current parse context stack
     
     def _reset(self, input_str: str) -> None:
         """Reset parser state for a new parse."""
@@ -457,10 +514,68 @@ class GLLParser:
         #                                           items_parsed, capture_name, original_desc)
         self._repeat_state: dict[str, tuple] = {}
         self._repeat_counter = 0
+        
+        # Reset error tracking
+        self.furthest_pos = 0
+        self.expected_at_furthest.clear()
+        self.contexts_at_furthest.clear()
+        self._current_contexts.clear()
     
     def _slot_key(self, slot: GrammarSlot) -> str:
         """Create a hashable key for a slot."""
         return f"{slot.rule_name}:{slot.pos}"
+    
+    def _record_failure(
+        self, 
+        pos: int, 
+        expected: ExpectedElement,
+        context: ParseContext | None = None,
+    ) -> None:
+        """
+        Record a parse failure at the given position.
+        If this is a new furthest position, reset and start fresh.
+        If at the same furthest position, add to the set of expected elements.
+        """
+        if pos > self.furthest_pos:
+            # New furthest position - reset tracking
+            self.furthest_pos = pos
+            self.expected_at_furthest.clear()
+            self.contexts_at_furthest.clear()
+        
+        if pos >= self.furthest_pos:
+            # Add to expected set
+            self.expected_at_furthest.add(expected)
+            if context and context not in self.contexts_at_furthest:
+                self.contexts_at_furthest.append(context)
+    
+    def _get_failure_info(self) -> FailureInfo:
+        """Get aggregated failure information."""
+        return FailureInfo(
+            position=self.furthest_pos,
+            expected=list(self.expected_at_furthest),
+            contexts=self.contexts_at_furthest.copy(),
+            partial_match_end=self.furthest_pos,
+        )
+    
+    def _make_context(
+        self, 
+        slot: GrammarSlot, 
+        pos: int, 
+        field_name: str | None = None,
+    ) -> ParseContext:
+        """Create a ParseContext from a slot and position."""
+        rule_name = slot.rule_name
+        # Skip internal rule names
+        if rule_name.startswith("_"):
+            parts = rule_name.split("_")
+            if len(parts) >= 3:
+                rule_name = parts[2]
+        return ParseContext(
+            rule_name=rule_name,
+            field_name=field_name,
+            position=pos,
+            grammar_element=slot.element,
+        )
     
     def _hash_elements(self, elements: list[GrammarElement]) -> str:
         """Create a deterministic hash for a list of grammar elements."""
@@ -591,10 +706,16 @@ class GLLParser:
         
         return combined
     
-    def _match_terminal(self, element: GrammarElement, pos: int) -> tuple[int, SPPFNode] | None:
+    def _match_terminal(
+        self, 
+        element: GrammarElement, 
+        pos: int,
+        context: ParseContext | None = None,
+    ) -> tuple[int, SPPFNode] | None:
         """
         Try to match a terminal at the given position.
         Returns (new_pos, sppf_node) or None if no match.
+        Records failure for error reporting when match fails.
         """
         if isinstance(element, GrammarLiteral):
             if not element.value:
@@ -606,10 +727,22 @@ class GLLParser:
                 sppf = self._get_or_create_sppf(f'"{element.value}"', pos, end)
                 sppf.families = [PackedNode(f'"{element.value}"', pos, [])]
                 return (end, sppf)
+            # Record failure
+            self._record_failure(
+                pos,
+                ExpectedElement('literal', f'"{element.value}"', element),
+                context,
+            )
             return None
         
         elif isinstance(element, GrammarCharClass):
             if pos >= self.input_len:
+                # Record failure - expected char class at end of input
+                self._record_failure(
+                    pos,
+                    ExpectedElement('char_class', f'[{element.pattern}]', element),
+                    context,
+                )
                 return None
             char = self.input[pos]
             matcher = self.grammar.char_matchers.get(element.pattern)
@@ -617,6 +750,12 @@ class GLLParser:
                 sppf = self._get_or_create_sppf(f"[{element.pattern}]", pos, pos + 1)
                 sppf.families = [PackedNode(char, pos, [])]
                 return (pos + 1, sppf)
+            # Record failure
+            self._record_failure(
+                pos,
+                ExpectedElement('char_class', f'[{element.pattern}]', element),
+                context,
+            )
             return None
         
         return None
@@ -752,8 +891,11 @@ class GLLParser:
             return
         
         # Handle different element types
+        # Build context for error reporting
+        context = self._make_context(slot, pos)
+        
         if isinstance(element, (GrammarLiteral, GrammarCharClass)):
-            result = self._match_terminal(element, pos)
+            result = self._match_terminal(element, pos, context)
             if result:
                 new_pos, term_sppf = result
                 combined = self._combine_sppf(current_sppf, term_sppf)
@@ -774,12 +916,20 @@ class GLLParser:
                     if next_slot:
                         new_gss = self._create(next_slot, gss, pos, current_sppf)
                         self._add(Descriptor(first_slot, new_gss, pos, None))
+            else:
+                # Rule not found - record expected
+                self._record_failure(
+                    pos,
+                    ExpectedElement('rule', element.name, element),
+                    context,
+                )
         
         elif isinstance(element, GrammarCapture):
             # Capture wraps an inner element - process the inner element
             inner = element.rule
+            capture_context = self._make_context(slot, pos, element.name)
             if isinstance(inner, (GrammarLiteral, GrammarCharClass)):
-                result = self._match_terminal(inner, pos)
+                result = self._match_terminal(inner, pos, capture_context)
                 if result:
                     new_pos, term_sppf = result
                     # Tag the SPPF with the capture name
@@ -801,6 +951,13 @@ class GLLParser:
                             # Create a wrapper slot that will tag the result
                             new_gss = self._create(next_slot, gss, pos, current_sppf)
                             self._add(Descriptor(first_slot, new_gss, pos, None))
+                else:
+                    # Rule not found - record expected
+                    self._record_failure(
+                        pos,
+                        ExpectedElement('rule', inner.name, inner),
+                        capture_context,
+                    )
             elif isinstance(inner, GrammarChoice):
                 self._process_choice(inner, desc, element.name)
             elif isinstance(inner, GrammarRepeat):
@@ -819,11 +976,15 @@ class GLLParser:
     
     def _process_choice(self, choice: GrammarChoice, desc: Descriptor, capture_name: str | None = None) -> None:
         """Process a choice element by trying all alternatives."""
+        context = self._make_context(desc.slot, desc.pos, capture_name)
+        any_matched = False
+        
         for i, alt in enumerate(choice.alternatives):
             # For each alternative, try to match it
             if isinstance(alt, (GrammarLiteral, GrammarCharClass)):
-                result = self._match_terminal(alt, desc.pos)
+                result = self._match_terminal(alt, desc.pos, context)
                 if result:
+                    any_matched = True
                     new_pos, term_sppf = result
                     if capture_name:
                         capture_sppf = self._get_or_create_sppf(f":{capture_name}", term_sppf.start, term_sppf.end)
@@ -836,6 +997,7 @@ class GLLParser:
             elif isinstance(alt, GrammarRef):
                 rule = self.grammar.rules.get(alt.name)
                 if rule:
+                    any_matched = True  # Could match, we'll try
                     called_slots = self.grammar.slots.get(alt.name, [])
                     if called_slots:
                         first_slot = called_slots[0]
@@ -844,8 +1006,29 @@ class GLLParser:
                             new_gss = self._create(next_slot, desc.gss, desc.pos, desc.sppf)
                             self._add(Descriptor(first_slot, new_gss, desc.pos, None))
             elif isinstance(alt, GrammarSequence):
+                any_matched = True  # Could match, we'll try
                 # Inline sequence in choice
                 self._process_sequence(alt, desc, capture_name)
+        
+        # If no terminal alternatives matched, record what was expected
+        if not any_matched:
+            # Build description of expected alternatives
+            alt_descs = []
+            for alt in choice.alternatives:
+                if isinstance(alt, GrammarLiteral):
+                    if alt.value:
+                        alt_descs.append(f'"{alt.value}"')
+                elif isinstance(alt, GrammarCharClass):
+                    alt_descs.append(f'[{alt.pattern}]')
+                elif isinstance(alt, GrammarRef):
+                    alt_descs.append(alt.name)
+            if alt_descs:
+                desc_str = " or ".join(alt_descs)
+                self._record_failure(
+                    desc.pos,
+                    ExpectedElement('rule', desc_str, choice),
+                    context,
+                )
     
     def _process_repeat(self, repeat: GrammarRepeat, desc: Descriptor, capture_name: str | None = None) -> None:
         """Process a repeat element."""
@@ -969,8 +1152,9 @@ class GLLParser:
                 return  # Unsupported separator type
         
         # Try to match the repeated element
+        context = self._make_context(desc.slot, desc.pos, capture_name)
         if isinstance(element, (GrammarLiteral, GrammarCharClass)):
-            result = self._match_terminal(element, pos)
+            result = self._match_terminal(element, pos, context)
             if result:
                 new_pos, item_sppf = result
                 new_acc = self._combine_sppf(accumulated_sppf, item_sppf)
@@ -1020,8 +1204,9 @@ class GLLParser:
         pos: int,
     ) -> None:
         """Parse a single repeat element (separator already matched if needed)."""
+        context = self._make_context(orig_desc.slot, pos, capture_name)
         if isinstance(element, (GrammarLiteral, GrammarCharClass)):
-            result = self._match_terminal(element, pos)
+            result = self._match_terminal(element, pos, context)
             if result:
                 new_pos, item_sppf = result
                 new_acc = self._combine_sppf(accumulated_sppf, item_sppf)
@@ -1065,9 +1250,10 @@ class GLLParser:
         pos: int,
     ) -> None:
         """Parse a choice element within a repeat."""
+        context = self._make_context(desc.slot, pos, capture_name)
         for alt in choice.alternatives:
             if isinstance(alt, (GrammarLiteral, GrammarCharClass)):
-                result = self._match_terminal(alt, pos)
+                result = self._match_terminal(alt, pos, context)
                 if result:
                     new_pos, item_sppf = result
                     new_acc = self._combine_sppf(accumulated_sppf, item_sppf)
@@ -1500,25 +1686,266 @@ class ParseTree:
             child._collect_captures(captures)
 
 
+# =============================================================================
+# Error Analysis and Formatting
+# =============================================================================
+
+class ParseFailureAnalyzer:
+    """
+    Analyzes parse failure information to generate human-readable error messages.
+    Uses grammar metadata (field names, rule names, structure) to produce
+    descriptive messages without requiring grammar author annotations.
+    """
+    
+    def __init__(
+        self,
+        input_str: str,
+        failure_info: FailureInfo,
+        grammar: CompiledGrammar,
+        start_rule: str,
+    ):
+        self.input_str = input_str
+        self.failure_info = failure_info
+        self.grammar = grammar
+        self.start_rule = start_rule
+    
+    def get_position_info(self) -> tuple[int, int]:
+        """Get (line, column) at the failure position."""
+        pos = self.failure_info.position
+        line = self.input_str.count('\n', 0, pos) + 1
+        last_newline = self.input_str.rfind('\n', 0, pos)
+        col = pos - last_newline
+        return line, col
+    
+    def get_found_char(self) -> str:
+        """Get the character found at the failure position."""
+        pos = self.failure_info.position
+        if pos >= len(self.input_str):
+            return "end of input"
+        char = self.input_str[pos]
+        if char == '\n':
+            return "newline"
+        if char == '\t':
+            return "tab"
+        if char == ' ':
+            return "space"
+        if not char.isprintable():
+            return f"\\x{ord(char):02x}"
+        return repr(char)
+    
+    def describe_expected(self) -> list[str]:
+        """Get human-readable descriptions of what was expected."""
+        descriptions = []
+        seen = set()
+        
+        for exp in self.failure_info.expected:
+            desc = self._describe_expected_element(exp)
+            if desc and desc not in seen:
+                seen.add(desc)
+                descriptions.append(desc)
+        
+        return descriptions
+    
+    def _describe_expected_element(self, exp: ExpectedElement) -> str:
+        """Convert an ExpectedElement to a human-readable string."""
+        if exp.kind == 'literal':
+            return exp.description
+        elif exp.kind == 'char_class':
+            return self._describe_char_class(exp.description)
+        elif exp.kind == 'rule':
+            return exp.description
+        elif exp.kind == 'end_of_input':
+            return "end of input"
+        return exp.description
+    
+    def _describe_char_class(self, pattern: str) -> str:
+        """Convert a character class pattern to a friendlier description."""
+        # Remove brackets if present
+        if pattern.startswith('[') and pattern.endswith(']'):
+            inner = pattern[1:-1]
+        else:
+            inner = pattern
+        
+        # Common patterns
+        if inner == '0-9':
+            return "digit [0-9]"
+        elif inner == 'a-z':
+            return "lowercase letter [a-z]"
+        elif inner == 'A-Z':
+            return "uppercase letter [A-Z]"
+        elif inner == 'a-zA-Z':
+            return "letter [a-zA-Z]"
+        elif inner == 'a-zA-Z0-9':
+            return "alphanumeric [a-zA-Z0-9]"
+        elif inner in (' \t\n\r', '\x20\t\n\r', ' \t'):
+            return "whitespace"
+        
+        return pattern
+    
+    def get_context_description(self) -> str | None:
+        """Get a description of what was being parsed when failure occurred."""
+        if not self.failure_info.contexts:
+            return None
+        
+        # Use the most recent context
+        ctx = self.failure_info.contexts[-1]
+        
+        if ctx.field_name:
+            return f"while parsing field `{ctx.field_name}` in {ctx.rule_name}"
+        else:
+            return f"while parsing {ctx.rule_name}"
+    
+    def generate_title(self) -> str:
+        """Generate the main error title."""
+        expected = self.describe_expected()
+        found = self.get_found_char()
+        
+        if len(expected) == 1:
+            return f"expected {expected[0]}, found {found}"
+        elif len(expected) > 1:
+            if len(expected) <= 3:
+                exp_str = " or ".join(expected)
+            else:
+                exp_str = f"one of: {', '.join(expected[:3])}, ..."
+            return f"expected {exp_str}, found {found}"
+        else:
+            return f"unexpected {found}"
+    
+    def generate_hint(self) -> str | None:
+        """Generate a helpful hint for fixing the error."""
+        if not self.failure_info.expected:
+            return None
+        
+        expected = self.describe_expected()
+        contexts = self.failure_info.contexts
+        
+        # If we're at end of input and expecting more
+        if self.failure_info.position >= len(self.input_str):
+            if expected:
+                return f"The input appears incomplete. Try adding {expected[0]}."
+            return "The input appears incomplete."
+        
+        # If we have context about what field was being parsed
+        if contexts:
+            ctx = contexts[-1]
+            if ctx.field_name:
+                if expected:
+                    return f"Check the value for `{ctx.field_name}` - expected {expected[0]}"
+        
+        return None
+
+
 class ParseError(Exception):
     """Raised when parsing fails."""
-    def __init__(self, message: str, position: int, input_str: str):
+    
+    def __init__(
+        self,
+        message: str,
+        position: int,
+        input_str: str,
+        failure_info: FailureInfo | None = None,
+        grammar: CompiledGrammar | None = None,
+        start_rule: str | None = None,
+        source_name: str = "<input>",
+    ):
+        self.message = message
         self.position = position
         self.input_str = input_str
+        self.failure_info = failure_info
+        self.grammar = grammar
+        self.start_rule = start_rule
+        self.source_name = source_name
         
-        # Create helpful error message with context
-        line = input_str.count('\n', 0, position) + 1
-        col = position - input_str.rfind('\n', 0, position)
-        context_start = max(0, position - 20)
-        context_end = min(len(input_str), position + 20)
-        context = input_str[context_start:context_end]
-        pointer_pos = position - context_start
+        # Generate the error message
+        full_message = self._format_error()
+        super().__init__(full_message)
+    
+    def _format_error(self) -> str:
+        """Format the error message, using prettyerr if available."""
+        # Try to use prettyerr for nice formatting
+        if self.failure_info and self.grammar and self.start_rule:
+            try:
+                return self._format_with_prettyerr()
+            except Exception:
+                pass
         
-        full_message = f"{message} at line {line}, column {col}\n"
+        # Fallback to basic formatting
+        return self._format_basic()
+    
+    def _format_basic(self) -> str:
+        """Basic error formatting without prettyerr."""
+        line = self.input_str.count('\n', 0, self.position) + 1
+        last_newline = self.input_str.rfind('\n', 0, self.position)
+        col = self.position - last_newline
+        
+        context_start = max(0, self.position - 30)
+        context_end = min(len(self.input_str), self.position + 30)
+        context = self.input_str[context_start:context_end]
+        pointer_pos = self.position - context_start
+        
+        # Escape special characters in context
+        context = context.replace('\n', '\\n').replace('\t', '\\t')
+        
+        full_message = f"{self.message} at line {line}, column {col}\n"
         full_message += f"  {context}\n"
         full_message += f"  {' ' * pointer_pos}^"
         
-        super().__init__(full_message)
+        return full_message
+    
+    def _format_with_prettyerr(self) -> str:
+        """Format error using prettyerr for rich output."""
+        from prettyerr import Error, Pointer, Span, SrcFile
+        
+        analyzer = ParseFailureAnalyzer(
+            self.input_str,
+            self.failure_info,
+            self.grammar,
+            self.start_rule,
+        )
+        
+        # Generate title
+        title = analyzer.generate_title()
+        
+        # Create span for error position
+        pos = self.failure_info.position
+        # Span at least one character, or point to end
+        end_pos = min(pos + 1, len(self.input_str)) if pos < len(self.input_str) else pos
+        error_span = Span(pos, end_pos)
+        
+        # Build pointer messages
+        pointers = []
+        
+        # Main error pointer
+        expected = analyzer.describe_expected()
+        if expected:
+            if len(expected) <= 3:
+                exp_msg = f"expected {' or '.join(expected)}"
+            else:
+                exp_msg = f"expected one of: {', '.join(expected)}"
+            pointers.append(Pointer(span=error_span, message=exp_msg))
+        else:
+            pointers.append(Pointer(span=error_span, message=f"unexpected {analyzer.get_found_char()}"))
+        
+        # Context pointer if available
+        ctx_desc = analyzer.get_context_description()
+        if ctx_desc and self.failure_info.contexts:
+            ctx = self.failure_info.contexts[-1]
+            if ctx.position < pos:
+                ctx_span = Span(ctx.position, min(ctx.position + 1, pos))
+                pointers.append(Pointer(span=ctx_span, message=ctx_desc))
+        
+        # Generate hint
+        hint = analyzer.generate_hint()
+        
+        # Build the error report
+        report = Error(
+            SrcFile.from_text(self.input_str, self.source_name),
+            title=title,
+            pointer_messages=pointers,
+            hint=hint,
+        )
+        
+        return str(report)
 
 
 def hydrate_rule(

@@ -39,6 +39,10 @@ from .gll import (
     DisambiguationRules,
     ParseTree,
     ParseError,
+    ParseFailureAnalyzer,
+    ExpectedElement,
+    ParseContext,
+    FailureInfo,
 )
 from .legacy import Turtle
 
@@ -80,5 +84,9 @@ __all__ = [
     'DisambiguationRules',
     'ParseTree',
     'ParseError',
+    'ParseFailureAnalyzer',
+    'ExpectedElement',
+    'ParseContext',
+    'FailureInfo',
     'Turtle',
 ]

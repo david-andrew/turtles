@@ -325,7 +325,17 @@ class RuleUnion[T]:
         
         result = parser.parse(self._name, raw)
         if result is None:
-            raise ParseError(f"Failed to parse as {self._name}", 0, raw)
+            # Get failure info from parser for detailed error message
+            failure_info = parser._get_failure_info()
+            raise ParseError(
+                f"Failed to parse as {self._name}",
+                failure_info.position,
+                raw,
+                failure_info=failure_info,
+                grammar=grammar,
+                start_rule=self._name,
+                source_name=self._source_file or "<input>",
+            )
         
         # Extract tree and hydrate
         tree = parser.extract_tree(result)
@@ -469,7 +479,18 @@ class RuleMeta(ABCMeta):
         
         result = parser.parse(cls.__name__, raw)
         if result is None:
-            raise ParseError(f"Failed to parse as {cls.__name__}", 0, raw)
+            # Get failure info from parser for detailed error message
+            failure_info = parser._get_failure_info()
+            source_name = rule_source_file if rule_source_file else "<input>"
+            raise ParseError(
+                f"Failed to parse as {cls.__name__}",
+                failure_info.position,
+                raw,
+                failure_info=failure_info,
+                grammar=grammar,
+                start_rule=cls.__name__,
+                source_name=source_name,
+            )
         
         # Extract parse tree with disambiguation
         tree = parser.extract_tree(result)
