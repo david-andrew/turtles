@@ -495,6 +495,148 @@ class TestMixinTypes:
         assert result == "hello_world"
         assert isinstance(result, str)
         assert result.upper() == "HELLO_WORLD"
+    
+    def test_int_mixin_isinstance(self):
+        """isinstance() should return True for int mixins."""
+        class NumId2(Rule, int):
+            id: repeat[char['0-9'], at_least[1]]
+        
+        result = NumId2("42")
+        assert isinstance(result, int)
+        assert result.__class__ is int
+    
+    def test_str_mixin_isinstance(self):
+        """isinstance() should return True for str mixins."""
+        class StrId(Rule, str):
+            id: repeat[char['a-z'], at_least[1]]
+        
+        result = StrId("hello")
+        assert isinstance(result, str)
+        assert result.__class__ is str
+    
+    def test_float_mixin_isinstance(self):
+        """isinstance() should return True for float mixins."""
+        class FloatNum(Rule, float):
+            whole: repeat[char['0-9'], at_least[1]]
+            '.'
+            frac: repeat[char['0-9'], at_least[1]]
+        
+        result = FloatNum("3.14")
+        assert isinstance(result, float)
+        assert result.__class__ is float
+        assert result == 3.14
+    
+    def test_mixin_comparison_operators(self):
+        """Comparison operators should work with mixin values."""
+        class NumVal(Rule, int):
+            val: repeat[char['0-9'], at_least[1]]
+        
+        result = NumVal("42")
+        assert result < 50
+        assert result <= 42
+        assert result > 10
+        assert result >= 42
+    
+    def test_mixin_as_dict_returns_value(self):
+        """as_dict() should return the mixin value directly."""
+        class NumVal2(Rule, int):
+            val: repeat[char['0-9'], at_least[1]]
+        
+        result = NumVal2("42")
+        assert result.as_dict() == 42
+    
+    def test_mixin_fields_still_accessible(self):
+        """Fields should still be accessible on mixin instances."""
+        class NumVal3(Rule, int):
+            val: repeat[char['0-9'], at_least[1]]
+        
+        result = NumVal3("42")
+        assert result.val == "42"
+        assert isinstance(result, int)
+
+
+class TestCustomConverter:
+    """Test custom converter (__convert__) functionality."""
+    
+    def test_convert_to_tuple(self):
+        """Test converting a parse result to a tuple."""
+        class Point(Rule):
+            x: repeat[char['0-9'], at_least[1]]
+            ','
+            y: repeat[char['0-9'], at_least[1]]
+            
+            def __convert__(self):
+                return (int(self.x), int(self.y))
+        
+        result = Point("3,4")
+        assert result == (3, 4)
+        assert result.__class__ is tuple
+    
+    def test_convert_fields_accessible(self):
+        """Original fields should still be accessible after conversion."""
+        class Point2(Rule):
+            x: repeat[char['0-9'], at_least[1]]
+            ','
+            y: repeat[char['0-9'], at_least[1]]
+            
+            def __convert__(self):
+                return (int(self.x), int(self.y))
+        
+        result = Point2("10,20")
+        assert result.x == "10"
+        assert result.y == "20"
+        assert result == (10, 20)
+    
+    def test_convert_as_dict_returns_converted(self):
+        """as_dict() should return the converted value."""
+        class Point3(Rule):
+            x: repeat[char['0-9'], at_least[1]]
+            ','
+            y: repeat[char['0-9'], at_least[1]]
+            
+            def __convert__(self):
+                return {"x": int(self.x), "y": int(self.y)}
+        
+        result = Point3("5,6")
+        assert result.as_dict() == {"x": 5, "y": 6}
+    
+    def test_convert_comparison_operators(self):
+        """Comparison operators should work with converted values."""
+        class NumStr(Rule):
+            val: repeat[char['0-9'], at_least[1]]
+            
+            def __convert__(self):
+                return int(self.val)
+        
+        result = NumStr("42")
+        assert result == 42
+        assert result < 50
+        assert result > 10
+        assert result.__class__ is int
+    
+    def test_convert_to_custom_class(self):
+        """Test converting to a custom class."""
+        class Coord:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+            
+            def __eq__(self, other):
+                if isinstance(other, Coord):
+                    return self.x == other.x and self.y == other.y
+                return False
+        
+        class CoordRule(Rule):
+            x: repeat[char['0-9'], at_least[1]]
+            ','
+            y: repeat[char['0-9'], at_least[1]]
+            
+            def __convert__(self):
+                return Coord(int(self.x), int(self.y))
+        
+        result = CoordRule("7,8")
+        assert result == Coord(7, 8)
+        assert result.__class__ is Coord
 
 
 # =============================================================================

@@ -1839,19 +1839,28 @@ class GLLParser:
     
     def extract_tree(self, sppf: SPPFNode) -> ParseTree:
         """Extract a single parse tree from SPPF, applying disambiguation."""
-        return self._extract_with_disambig(sppf)
+        return self._extract_with_disambig(sppf, set())
     
-    def _extract_with_disambig(self, sppf: SPPFNode) -> ParseTree:
+    def _extract_with_disambig(self, sppf: SPPFNode, visited: set[int]) -> ParseTree:
         """Extract parse tree with disambiguation rules applied."""
+        node_id = id(sppf)
+        if node_id in visited:
+            # Cycle detected - return leaf node to break recursion
+            return ParseTree(sppf.label, sppf.start, sppf.end, [])
+        
         if not sppf.families:
             # Leaf node
             return ParseTree(sppf.label, sppf.start, sppf.end, [])
+        
+        visited.add(node_id)
         
         # Apply disambiguation to select best family
         best_family = self._select_best_family(sppf)
         
         # Recursively extract children
-        children = [self._extract_with_disambig(child) for child in best_family.children]
+        children = [self._extract_with_disambig(child, visited) for child in best_family.children]
+        
+        visited.remove(node_id)  # Allow node in different branches
         
         return ParseTree(sppf.label, sppf.start, sppf.end, children)
     

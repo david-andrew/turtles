@@ -571,6 +571,9 @@ def _hydrate_tree(
     else:
         instance = object.__new__(target_cls)
     
+    # Store the actual class for __class__ property
+    object.__setattr__(instance, '_actual_class', target_cls)
+    
     # If the tree label doesn't match target_cls, find the matching subtree
     target_tree = tree
     if tree.label != target_cls.__name__:
@@ -627,6 +630,14 @@ def _hydrate_tree(
     object.__setattr__(instance, '_text', text)
     object.__setattr__(instance, '_tree', tree)
     object.__setattr__(instance, '_input_str', input_str)
+    
+    # Handle custom converter (__convert__ method)
+    if hasattr(target_cls, '__convert__'):
+        try:
+            converted = instance.__convert__()
+            object.__setattr__(instance, '_converted_value', converted)
+        except Exception:
+            pass
     
     return instance
 
@@ -1262,13 +1273,48 @@ class Rule(ABC, metaclass=RuleMeta):
     def __init__(self, raw:str, /):
         ...
     
+    def _get_actual_class(self):
+        """Get the actual class (not mixin base) for internal use."""
+        try:
+            return object.__getattribute__(self, '_actual_class')
+        except AttributeError:
+            # Fallback - shouldn't normally happen for hydrated instances
+            return Rule
+    
+    def _get_effective_class(self):
+        """Get the effective class (mixin base or converted type) for type checking."""
+        actual_class = self._get_actual_class()
+        
+        # Check for mixin base (int, float, str, bool)
+        for base in actual_class.__mro__:
+            if base in (int, float, str, bool):
+                return base
+        
+        # Check for converter result type
+        try:
+            converted = object.__getattribute__(self, '_converted_value')
+            return type(converted)
+        except AttributeError:
+            pass
+        
+        return actual_class
+    
+    @property
+    def __class__(self):
+        """Return the mixin base type or converted value type for type() and isinstance()."""
+        return self._get_effective_class()
+    
     def __eq__(self, other: object) -> bool:
-        """Compare with other values. Supports comparison with mixin base types."""
+        """Compare with other values. Supports comparison with mixin/converted types."""
         # Allow comparison with class (e.g., instance == JNull)
         if isinstance(other, type) and issubclass(other, Rule):
-            return isinstance(self, other)
+            actual_cls = self._get_actual_class()
+            return issubclass(actual_cls, other)
+        # Check converted value first (from __convert__)
+        if hasattr(self, '_converted_value'):
+            return self._converted_value == other
+        # Then check mixin value
         if hasattr(self, '_mixin_value'):
-            # For mixin types, compare the converted value
             return self._mixin_value == other
         if hasattr(self, '_text'):
             # Compare by matched text
@@ -1279,11 +1325,47 @@ class Rule(ABC, metaclass=RuleMeta):
         return self is other
     
     def __hash__(self) -> int:
+        if hasattr(self, '_converted_value'):
+            return hash(self._converted_value)
         if hasattr(self, '_mixin_value'):
             return hash(self._mixin_value)
         if hasattr(self, '_text'):
             return hash(self._text)
         return id(self)
+    
+    def _get_comparable_value(self):
+        """Get the value to use for comparisons."""
+        if hasattr(self, '_converted_value'):
+            return self._converted_value
+        if hasattr(self, '_mixin_value'):
+            return self._mixin_value
+        if hasattr(self, '_text'):
+            return self._text
+        return None
+    
+    def __lt__(self, other: object) -> bool:
+        val = self._get_comparable_value()
+        if val is not None:
+            return val < other
+        return NotImplemented
+    
+    def __le__(self, other: object) -> bool:
+        val = self._get_comparable_value()
+        if val is not None:
+            return val <= other
+        return NotImplemented
+    
+    def __gt__(self, other: object) -> bool:
+        val = self._get_comparable_value()
+        if val is not None:
+            return val > other
+        return NotImplemented
+    
+    def __ge__(self, other: object) -> bool:
+        val = self._get_comparable_value()
+        if val is not None:
+            return val >= other
+        return NotImplemented
     
     def __str__(self) -> str:
         if hasattr(self, '_text'):
@@ -1293,13 +1375,23 @@ class Rule(ABC, metaclass=RuleMeta):
     def __repr__(self) -> str:
         if hasattr(self, '_tree') and hasattr(self, '_input_str'):
             return tree_string(self)
-        cls_name = self.__class__.__name__
+        # Use actual class name, not mixin base
+        actual_cls = self._get_actual_class()
+        cls_name = actual_cls.__name__
         if hasattr(self, '_text'):
             return f"{cls_name}({self._text!r})"
         return f"{cls_name}()"
 
     def as_dict(self) -> AsDictResult:
-        cls = self.__class__
+        # If we have a converted value, return it directly
+        if hasattr(self, '_converted_value'):
+            return self._converted_value
+        # If we have a mixin value, return it directly
+        if hasattr(self, '_mixin_value'):
+            return self._mixin_value
+        
+        # Use actual class, not mixin base
+        cls = self._get_actual_class()
         optional_fields: set[str] = set()
         sequence = getattr(cls, "_sequence", None)
         if isinstance(sequence, list):
@@ -1333,8 +1425,7 @@ class Rule(ABC, metaclass=RuleMeta):
 
         if fields:
             return fields
-        if hasattr(self, "_mixin_value"):
-            return getattr(self, "_mixin_value")
+        # No fields, no mixin/converted value - return text
         return getattr(self, "_text", "")
     
     # Numeric operations for mixin types (int, float)
