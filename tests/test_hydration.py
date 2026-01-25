@@ -508,7 +508,7 @@ class TestMixinTypes:
     def test_str_mixin_isinstance(self):
         """isinstance() should return True for str mixins."""
         class StrId(Rule, str):
-            id: repeat[char['a-z'], at_least[1]]
+            id: repeat[char['a-z'], at_least[1]]  # noqa
         
         result = StrId("hello")
         assert isinstance(result, str)
@@ -641,7 +641,7 @@ class TestCustomConverter:
     def test_convert_to_bool(self):
         """Test converting to boolean with proper truthiness."""
         class BoolStr(Rule):
-            val: either['true', 'false']
+            val: either[r"true", r"false"]  # noqa
             
             def __convert__(self):
                 return self.val == 'true'
@@ -650,8 +650,8 @@ class TestCustomConverter:
         false_result = BoolStr("false")
         
         # Check equality
-        assert true_result == True
-        assert false_result == False
+        assert true_result == True    # noqa
+        assert false_result == False # noqa
         
         # Check __class__ returns bool
         assert true_result.__class__ is bool
