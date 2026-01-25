@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
-from turtles import Rule, char, repeat, at_least, exactly, separator, either, sequence, optional, clear_registry_for_file
+from turtles import Rule, char, repeat, at_least, clear_registry_for_file
 from turtles.easygrammar import _captured_locals
 
 _THIS_FILE = str(Path(__file__).resolve())
@@ -262,6 +262,7 @@ class TestAssociativity:
         # Top should be Add with left=Add(1,2) and right=3
         assert isinstance(result, Add), f"Expected Add, got {type(result).__name__}"
         assert isinstance(result.left, Add), f"Expected left to be Add, got {type(result.left).__name__}"
+        assert isinstance(result.left.left, Num), f"Expected left.left to be Num, got {type(result.left.left).__name__}"
         assert result.left.left.value == "1"
         assert result.left.right.value == "2"
         assert result.right.value == "3"

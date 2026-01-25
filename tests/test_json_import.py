@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from turtles.examples.json import JSON, JObject, JArray, JString, JNumber
+from turtles.examples.json import JSON
 
 
 class TestJSONImport:
@@ -106,7 +106,6 @@ class TestJSONComposition:
         is not yet implemented.
         """
         from turtles import Rule, repeat, separator
-        from turtles.examples.json import JSON
         
         class JSONL(Rule):
             lines: repeat[JSON, separator['\n']]

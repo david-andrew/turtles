@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from types import NoneType, NotImplementedType, UnionType
-import typing
-from typing import Self, final, Protocol, Any, Union, overload, Annotated as Cast, TYPE_CHECKING
-from abc import ABC, ABCMeta, abstractmethod
+from typing import final, Protocol, Union, overload, TYPE_CHECKING
+from abc import ABC, ABCMeta
 import inspect
 import ast
 
@@ -405,10 +403,8 @@ class RuleMeta(ABCMeta):
 
     def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
         """Parse input string and return a hydrated Rule instance."""
-        from .backend.gll import (
-            CompiledGrammar, GLLParser, DisambiguationRules, ParseTree, ParseError
-        )
-        from .grammar import get_all_rules, lookup_by_name
+        from .backend.gll import CompiledGrammar, GLLParser, DisambiguationRules, ParseError
+        from .grammar import get_all_rules
         
         # Get all registered rules from the Rule's source file
         # This allows Rules to be imported and used from different files
@@ -491,9 +487,7 @@ def _hydrate_tree(
     """
     Hydrate a parse tree into a Rule instance.
     Populates fields based on captures in the tree.
-    """
-    from .backend.gll import ParseTree
-    
+    """    
     # Build a map of rule names to classes on first call
     if rule_classes is None:
         rule_classes = _build_rule_classes_map(source_file)
@@ -590,7 +584,6 @@ def _grammar_guided_extract(
         GrammarSequence, GrammarCapture, GrammarRef, GrammarRepeat, 
         GrammarCharClass, GrammarLiteral, GrammarChoice
     )
-    from .backend.gll import ParseTree
     
     captures: dict[str, list] = {}
     list_captures: set[str] = set()

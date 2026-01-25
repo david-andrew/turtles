@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from turtles import Rule, char, repeat, at_least, separator, either, optional, sequence
+from turtles import Rule, char, repeat, at_least, separator, sequence
 
 class SemVer(Rule):
     major: NumId

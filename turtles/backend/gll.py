@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, Literal
-from pathlib import Path
 
 from ..grammar import (
     GrammarElement,
@@ -23,7 +22,6 @@ from ..grammar import (
     GrammarChoice,
     GrammarSequence,
     GrammarRule,
-    lookup_by_name,
 )
 
 
