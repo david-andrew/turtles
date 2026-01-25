@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import ast
 
 
 @dataclass(frozen=True)
@@ -264,9 +265,6 @@ def clear_registry_for_file(source_file: str) -> None:
 
 
 # --- Annotation Parsing ---
-
-import ast
-
 
 def _parse_annotation(annotation_str: str, source_file: str, source_line: int) -> GrammarElement:
     """

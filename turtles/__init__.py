@@ -33,7 +33,7 @@ from .grammar import (
     clear_registry,
     clear_registry_for_file,
 )
-from .backend.gll import (
+from .gll import (
     GLLParser,
     CompiledGrammar,
     DisambiguationRules,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import final, Protocol, Union, overload, TYPE_CHECKING
+from typing import final, Union, overload, TYPE_CHECKING
 from abc import ABC, ABCMeta
 import inspect
 import ast
@@ -9,7 +9,7 @@ from .grammar import register_rule, _build_grammar
 
 if TYPE_CHECKING:
     from .grammar import GrammarRule
-    from .backend.gll import ParseTree, CompiledGrammar
+    from .gll import ParseTree, CompiledGrammar
 
 
 class SourceNotAvailableError(Exception):
@@ -239,7 +239,7 @@ class RuleUnion[T]:
     
     def __call__(self, raw: str) -> T:
         """Parse input string using this union as the start rule."""
-        from .backend.gll import (
+        from .gll import (
             CompiledGrammar, GLLParser, DisambiguationRules, ParseError
         )
         from .grammar import get_all_rules
@@ -403,7 +403,7 @@ class RuleMeta(ABCMeta):
 
     def __call__[T:Rule](cls: type[T], raw: str, /) -> T:
         """Parse input string and return a hydrated Rule instance."""
-        from .backend.gll import CompiledGrammar, GLLParser, DisambiguationRules, ParseError
+        from .gll import CompiledGrammar, GLLParser, DisambiguationRules, ParseError
         from .grammar import get_all_rules
         
         # Get all registered rules from the Rule's source file
@@ -626,37 +626,6 @@ def _grammar_guided_extract(
             return elem.name
         return None
     
-    def find_rule_node(node: ParseTree, rule_name: str, skip_root: bool = True) -> ParseTree | None:
-        """Find a single Rule node by name, skipping the root to avoid recursion issues."""
-        def _search(n: ParseTree, is_root: bool) -> ParseTree | None:
-            # Found exact match (but skip root if it's the same rule we're hydrating)
-            if n.label == rule_name:
-                if is_root and skip_root:
-                    # Skip the root, search children instead
-                    pass
-                else:
-                    return n
-            
-            # Check compound labels (e.g., "Key+WS+Val")
-            if '+' in n.label and rule_name in n.label.split('+'):
-                for child in n.children:
-                    result = _search(child, False)
-                    if result:
-                        return result
-            
-            # Don't descend into other Rules (except the root)
-            if n.label in rule_classes and n.label != target_cls.__name__:
-                return None
-            
-            # Search children
-            for child in n.children:
-                result = _search(child, False)
-                if result:
-                    return result
-            
-            return None
-        
-        return _search(node, True)
     
     def find_all_rule_nodes(node: ParseTree, rule_name: str, results: list = None, depth: int = 0) -> list[ParseTree]:
         """Find all Rule nodes by name (for repeats)."""
@@ -1406,11 +1375,6 @@ class Rule(ABC, metaclass=RuleMeta):
         register_rule(grammar_rule)
         setattr(cls, "_grammar", grammar_rule)
 
-
-
-# protocol for helper functions
-class HelperFunction(Protocol):
-    def __call__(self, *args: Any, **kwargs: Any) -> type[Rule]: ...
 
 
 # TODO: consider instead making these just classes that we call with arguments, since they aren't rules (char needs special handling though...)

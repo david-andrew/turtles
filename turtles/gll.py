@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Literal
 
-from ..grammar import (
+from .grammar import (
     GrammarElement,
     GrammarLiteral,
     GrammarCharClass,
