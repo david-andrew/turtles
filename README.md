@@ -258,7 +258,7 @@ At a high level, parsing works like this:
 1. The GLL parser runs against the input and produces a compact shared parse forest.
 1. Turtles extracts a parse tree (with optional disambiguation rules like precedence/associativity) and **hydrates** it back into instances of your `Rule` classes.
 
-Read more: 
+Read more: https://dotat.at/tmp/gll.pdf
 
 ## Looking for the old Turtles?
 ⚠️ The turtles project has been rebooted. `v2.0.0` and onward will not be compatible with the original `v1.0.0` release. If you are looking for the original project, see [Roguelazer/turtles](https://github.com/Roguelazer/turtles). 
