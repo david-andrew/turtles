@@ -36,10 +36,10 @@ def clear_test_state():
 
 def test_as_dict_nested_repeat_of_rules():
     class Word(Rule):
-        text: repeat[char["a-z"], at_least[1]]
+        text: repeat[char["a-z"], at_least[1]]  # noqa
 
     class Words(Rule):
-        items: repeat[Word, separator[" "], at_least[1]]
+        items: repeat[Word, separator[" "], at_least[1]]  # noqa
 
     result = Words("foo bar")
     assert result.as_dict() == {
@@ -52,7 +52,7 @@ def test_as_dict_nested_repeat_of_rules():
 
 def test_as_dict_optional_present_and_absent():
     class SignedInt(Rule):
-        sign: optional[char["+-"]]
+        sign: optional[char["+-"]]  # noqa
         digits: repeat[char["0-9"], at_least[1]]
 
     assert SignedInt("+12").as_dict() == {"sign": "+", "digits": "12"}
@@ -62,10 +62,10 @@ def test_as_dict_optional_present_and_absent():
 def test_as_dict_union_with_none_present_and_absent():
     class Tag(Rule):
         "#"
-        name: repeat[char["a-z"], at_least[1]]
+        name: repeat[char["a-z"], at_least[1]]  # noqa
 
     class Line(Rule):
-        label: repeat[char["a-z"], at_least[1]]
+        label: repeat[char["a-z"], at_least[1]]  # noqa
         tag: Tag | None
 
     assert Line("hello#world").as_dict() == {"label": "hello", "tag": {"name": "world"}}

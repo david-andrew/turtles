@@ -25,7 +25,7 @@ class JNull(Rule):
 
 # Boolean
 class JBool(Rule):
-    value: either[r"true", r"false"]
+    value: either[r"true", r"false"]  # noqa
 
 
 # Number components
@@ -40,12 +40,12 @@ class Fractional(Rule):
 
 class Exponent(Rule):
     char['eE']
-    sign: optional[char['+-']]
+    sign: optional[char['+-']]  # noqa
     value: repeat[char['0-9'], at_least[1]]
 
 
 class JNumber(Rule):
-    sign: optional[r'-']
+    sign: optional[r'-']  # noqa
     whole: Int
     fractional: optional[Fractional]
     exponent: optional[Exponent]
@@ -53,11 +53,11 @@ class JNumber(Rule):
 
 # String escape sequences
 class SimpleEscape(Rule):
-    ch: either[r"\\", r"\"", r"\/", r"\b", r"\f", r"\n", r"\r", r"\t"]
+    ch: either[r"\\", r"\"", r"\/", r"\b", r"\f", r"\n", r"\r", r"\t"]  # noqa
 
 
 class HexEscape(Rule):
-    ch: sequence[r"\u", repeat[char['0-9a-fA-F'], exactly[4]]]
+    ch: sequence[r"\u", repeat[char['0-9a-fA-F'], exactly[4]]]  # noqa
 
 
 Escape = SimpleEscape | HexEscape
@@ -66,7 +66,7 @@ Escape = SimpleEscape | HexEscape
 # String (printable ASCII and Unicode, except quote and backslash, plus escapes)
 class JString(Rule):
     '"'
-    value: repeat[char['\x20-\x21\x23-\x5B\x5D-\U0010FFFF'] | Escape]
+    value: repeat[char['\x20-\x21\x23-\x5B\x5D-\U0010FFFF'] | Escape]  # noqa
     '"'
 
 

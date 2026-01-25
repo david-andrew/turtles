@@ -16,19 +16,19 @@ class JNull(Rule):
     "null"
 
 class JBool(Rule):
-    value: either[r"true", r"false"]
+    value: either[r"true", r"false"]  # noqa
 
 class JNumber(Rule):
     value: repeat[char['0-9'], at_least[1]]
 
 class JString(Rule):
     '"'
-    value: repeat[char[r"A-Za-z0-9 !#$%&'()*+,\-./:;<=>?@[]^_`{|}~"]]
+    value: repeat[char[r"A-Za-z0-9 !#$%&'()*+,\-./:;<=>?@[]^_`{|}~"]]  # noqa
     '"'
 
 class JArray(Rule):
     '['
-    items: repeat[JSONValue, separator[',']]
+    items: repeat[JSONValue, separator[',']]  # noqa
     ']'
 
 class Pair(Rule):
@@ -38,7 +38,7 @@ class Pair(Rule):
 
 class JObject(Rule):
     '{'
-    pairs: repeat[Pair, separator[',']]
+    pairs: repeat[Pair, separator[',']]  # noqa
     '}'
 
 JSONValue = JNull | JBool | JNumber | JString | JArray | JObject

@@ -13,14 +13,14 @@ class SemVer(Rule):
 
 class Prerelease(Rule):
     "-"
-    ids: repeat[Id, separator['.'], at_least[1]]
+    ids: repeat[Id, separator['.'], at_least[1]]  # noqa
 
 class Build(Rule):
     "+"
-    ids: repeat[Id, separator['.'], at_least[1]]
+    ids: repeat[Id, separator['.'], at_least[1]]  # noqa
 
 class NumId(Rule):
-    id: '0' | sequence[char['1-9'], repeat[char['0-9']]]
+    id: '0' | sequence[char['1-9'], repeat[char['0-9']]]  # noqa
 
 class Id(Rule):
-    id: repeat[char['a-zA-Z0-9-'], at_least[1]]
+    id: repeat[char['a-zA-Z0-9-'], at_least[1]]  # noqa

@@ -33,8 +33,8 @@ def expr_grammar():
     
     class Id(Rule):
         # First char must be letter/underscore, rest can include digits
-        first: char['a-zA-Z_']
-        rest: repeat[char['a-zA-Z_0-9']]
+        first: char['a-zA-Z_']  # noqa
+        rest: repeat[char['a-zA-Z_0-9']]  # noqa
 
     class Add(Rule):
         left: Expr

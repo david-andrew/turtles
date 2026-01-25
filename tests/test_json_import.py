@@ -108,7 +108,7 @@ class TestJSONComposition:
         from turtles import Rule, repeat, separator
         
         class JSONL(Rule):
-            lines: repeat[JSON, separator['\n']]
+            lines: repeat[JSON, separator['\n']]  # noqa
         
         jsonl_input = '{"a": 1}\n{"b": 2}\n{"c": 3}'
         result = JSONL(jsonl_input)

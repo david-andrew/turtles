@@ -49,7 +49,7 @@ class TestStringLiterals:
     
     def test_captured_literal_choice(self):
         class Bool(Rule):
-            value: either[r"true", r"false"]
+            value: either[r"true", r"false"]  # noqa
         
         result_true = Bool("true")
         assert result_true.value == "true"
@@ -77,8 +77,8 @@ class TestCharacterClasses:
     
     def test_multiple_char_classes(self):
         class AlphaNum(Rule):
-            first: char['a-zA-Z']
-            rest: repeat[char['a-zA-Z0-9']]
+            first: char['a-zA-Z']  # noqa
+            rest: repeat[char['a-zA-Z0-9']]  # noqa
         
         result = AlphaNum("abc123")
         assert result.first == "a"
@@ -87,7 +87,7 @@ class TestCharacterClasses:
     def test_greeting(self):
         class Greeting(Rule):
             "Hello, "
-            name: repeat[char['a-zA-Z'], at_least[1]]
+            name: repeat[char['a-zA-Z'], at_least[1]]  # noqa
             "!"
         
         result = Greeting("Hello, World!")
@@ -102,7 +102,7 @@ class TestAnonymousVsCaptured:
     def test_anonymous_literal(self):
         class Quoted(Rule):
             '"'
-            value: repeat[char['a-z']]
+            value: repeat[char['a-z']]  # noqa
             '"'
         
         result = Quoted('"hello"')
@@ -112,7 +112,7 @@ class TestAnonymousVsCaptured:
     def test_anonymous_char_class(self):
         class Exponent(Rule):
             char['eE']
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             value: repeat[char['0-9'], at_least[1]]
         
         # Without sign
@@ -135,7 +135,7 @@ class TestRepetition:
     
     def test_zero_or_more(self):
         class Letters(Rule):
-            value: repeat[char['a-z']]
+            value: repeat[char['a-z']]  # noqa
         
         result_some = Letters("abc")
         assert result_some.value == "abc"
@@ -152,14 +152,14 @@ class TestRepetition:
     
     def test_at_most(self):
         class Limited(Rule):
-            value: repeat[char['a-z'], at_most[3]]
+            value: repeat[char['a-z'], at_most[3]]  # noqa
         
         result = Limited("ab")
         assert result.value == "ab"
     
     def test_exactly(self):
         class HexByte(Rule):
-            value: repeat[char['0-9a-fA-F'], exactly[2]]
+            value: repeat[char['0-9a-fA-F'], exactly[2]]  # noqa
         
         result = HexByte("FF")
         assert result.value == "FF"
@@ -169,7 +169,7 @@ class TestRepetition:
             value: repeat[char['0-9'], at_least[1]]
         
         class CSVNumbers(Rule):
-            items: repeat[CSVNum, separator[',']]
+            items: repeat[CSVNum, separator[',']]  # noqa
         
         result = CSVNumbers("1,2,3")
         assert len(result.items) == 3
@@ -184,10 +184,10 @@ class TestRepetition:
             " "
         
         class SepItem(Rule):
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class SepItems(Rule):
-            items: repeat[SepItem, separator[SepComma]]
+            items: repeat[SepItem, separator[SepComma]]  # noqa
         
         result = SepItems("foo , bar , baz")
         assert len(result.items) == 3
@@ -197,7 +197,7 @@ class TestRepetition:
     
     def test_repeat_of_terminals_is_string(self):
         class TermWord(Rule):
-            letters: repeat[char['a-z'], at_least[1]]
+            letters: repeat[char['a-z'], at_least[1]]  # noqa
         
         result = TermWord("hello")
         assert isinstance(result.letters, str)
@@ -205,10 +205,10 @@ class TestRepetition:
     
     def test_repeat_of_rules_is_list(self):
         class ListWord(Rule):
-            letters: repeat[char['a-z'], at_least[1]]
+            letters: repeat[char['a-z'], at_least[1]]  # noqa
         
         class ListWords(Rule):
-            words: repeat[ListWord, separator[' ']]
+            words: repeat[ListWord, separator[' ']]  # noqa
         
         result = ListWords("foo bar baz")
         assert isinstance(result.words, list)
@@ -224,7 +224,7 @@ class TestChoice:
     
     def test_terminal_alternatives(self):
         class Keyword(Rule):
-            value: either[r"if", r"else", r"while"]
+            value: either[r"if", r"else", r"while"]  # noqa
         
         assert Keyword("if").value == "if"
         assert Keyword("else").value == "else"
@@ -235,7 +235,7 @@ class TestChoice:
             digits: repeat[char['0-9'], at_least[1]]
         
         class AltId(Rule):
-            letters: repeat[char['a-z'], at_least[1]]
+            letters: repeat[char['a-z'], at_least[1]]  # noqa
         
         AltExprValue = AltNum | AltId
         
@@ -255,7 +255,7 @@ class TestChoice:
             digits: repeat[char['0-9'], at_least[1]]
         
         class UnionId(Rule):
-            letters: repeat[char['a-z'], at_least[1]]
+            letters: repeat[char['a-z'], at_least[1]]  # noqa
         
         UnionValue = UnionNum | UnionId
         
@@ -286,7 +286,7 @@ class TestOptional:
     
     def test_optional_present(self):
         class SignedNum(Rule):
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             value: repeat[char['0-9'], at_least[1]]
         
         result = SignedNum("+42")
@@ -295,7 +295,7 @@ class TestOptional:
     
     def test_optional_absent(self):
         class SignedNum(Rule):
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             value: repeat[char['0-9'], at_least[1]]
         
         result = SignedNum("42")
@@ -305,11 +305,11 @@ class TestOptional:
     def test_optional_rule_present(self):
         class MaybeTagged(Rule):
             tag: optional[Tag]
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class Tag(Rule):
             '['
-            name: repeat[char['A-Z'], at_least[1]]
+            name: repeat[char['A-Z'], at_least[1]]  # noqa
             ']'
         
         result = MaybeTagged("[FOO]bar")
@@ -320,11 +320,11 @@ class TestOptional:
     def test_optional_rule_absent(self):
         class MaybeTagged(Rule):
             tag: optional[Tag]
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class Tag(Rule):
             '['
-            name: repeat[char['A-Z'], at_least[1]]
+            name: repeat[char['A-Z'], at_least[1]]  # noqa
             ']'
         
         result = MaybeTagged("bar")
@@ -333,7 +333,7 @@ class TestOptional:
     
     def test_multiple_optionals(self):
         class Number(Rule):
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             whole: repeat[char['0-9'], at_least[1]]
             frac: optional[Frac]
             exp: optional[Exp]
@@ -344,7 +344,7 @@ class TestOptional:
         
         class Exp(Rule):
             char['eE']
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             digits: repeat[char['0-9'], at_least[1]]
         
         # Just integer
@@ -399,7 +399,7 @@ class TestSequence:
     
     def test_anonymous_between_captures(self):
         class KeyValue(Rule):
-            key: repeat[char['a-z'], at_least[1]]
+            key: repeat[char['a-z'], at_least[1]]  # noqa
             ':'
             value: repeat[char['0-9'], at_least[1]]
         
@@ -430,7 +430,7 @@ class TestRuleReferences:
     
     def test_forward_reference(self):
         class FwdInner(Rule):
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class FwdOuter(Rule):
             '('
@@ -443,7 +443,7 @@ class TestRuleReferences:
     
     def test_backward_reference(self):
         class BwdInner(Rule):
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class BwdOuter(Rule):
             '('
@@ -489,7 +489,7 @@ class TestMixinTypes:
     
     def test_str_mixin(self):
         class Identifier(Rule, str):
-            id: repeat[char['a-zA-Z0-9_'], at_least[1]]
+            id: repeat[char['a-zA-Z0-9_'], at_least[1]]  # noqa
         
         result = Identifier("hello_world")
         assert result == "hello_world"
@@ -508,7 +508,7 @@ class TestEdgeCases:
         """The 'e' should NOT appear as the sign."""
         class ExpAnon(Rule):
             char['eE']
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             value: repeat[char['0-9'], at_least[1]]
         
         result = ExpAnon("e10")
@@ -532,7 +532,7 @@ class TestEdgeCases:
             repeat[char[' \t']]
         
         class KeyF(Rule):
-            name: repeat[char['a-z'], at_least[1]]
+            name: repeat[char['a-z'], at_least[1]]  # noqa
         
         class ValueF(Rule):
             digits: repeat[char['0-9'], at_least[1]]
@@ -561,7 +561,7 @@ class TestEdgeCases:
             WSL
         
         class ItemL(Rule):
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class ItemsL(Rule):
             '['
@@ -580,7 +580,7 @@ class TestEdgeCases:
         from turtles import tree_string
         
         class NumberTS(Rule):
-            sign: optional[char['+-']]
+            sign: optional[char['+-']]  # noqa
             value: repeat[char['0-9'], at_least[1]]
         
         result = NumberTS("42")
@@ -591,7 +591,7 @@ class TestEdgeCases:
     def test_deeply_nested_captures(self):
         """Captures work at various nesting depths."""
         class InnerN(Rule):
-            value: repeat[char['a-z'], at_least[1]]
+            value: repeat[char['a-z'], at_least[1]]  # noqa
         
         class MiddleN(Rule):
             '['
@@ -699,11 +699,11 @@ def test_full_json_number_integer():
     
     class JExp1(Rule):
         char['eE']
-        sign: optional[char['+-']]
+        sign: optional[char['+-']]  # noqa
         value: repeat[char['0-9'], at_least[1]]
     
     class JNum1(Rule):
-        sign: optional[char['-']]
+        sign: optional[char['-']]  # noqa
         whole: JInt1
         frac: optional[JFrac1]
         exp: optional[JExp1]
@@ -724,11 +724,11 @@ def test_full_json_number_with_fraction():
     
     class JExp2(Rule):
         char['eE']
-        sign: optional[char['+-']]
+        sign: optional[char['+-']]  # noqa
         value: repeat[char['0-9'], at_least[1]]
     
     class JNum2(Rule):
-        sign: optional[char['-']]
+        sign: optional[char['-']]  # noqa
         whole: JInt2
         frac: optional[JFrac2]
         exp: optional[JExp2]
@@ -749,11 +749,11 @@ def test_full_json_number_with_exponent():
     
     class JExp3(Rule):
         char['eE']
-        sign: optional[char['+-']]
+        sign: optional[char['+-']]  # noqa
         value: repeat[char['0-9'], at_least[1]]
     
     class JNum3(Rule):
-        sign: optional[char['-']]
+        sign: optional[char['-']]  # noqa
         whole: JInt3
         frac: optional[JFrac3]
         exp: optional[JExp3]
@@ -774,11 +774,11 @@ def test_full_json_number_complete():
     
     class JExp4(Rule):
         char['eE']
-        sign: optional[char['+-']]
+        sign: optional[char['+-']]  # noqa
         value: repeat[char['0-9'], at_least[1]]
     
     class JNum4(Rule):
-        sign: optional[char['-']]
+        sign: optional[char['-']]  # noqa
         whole: JInt4
         frac: optional[JFrac4]
         exp: optional[JExp4]
@@ -800,7 +800,7 @@ def test_json_with_whitespace():
     
     class JString(Rule):
         '"'
-        value: repeat[char['a-zA-Z0-9_']]
+        value: repeat[char['a-zA-Z0-9_']]  # noqa
         '"'
     
     class Pair(Rule):

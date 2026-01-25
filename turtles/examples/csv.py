@@ -41,7 +41,7 @@ class EscapedQuote(Rule):
 # Any char except a double quote. Includes CR/LF, commas, etc.
 # (that’s what allows multiline quoted fields)
 class QuotedChar(Rule):
-    ch: char["\x00-\x21\x23-\U0010FFFF"]
+    ch: char["\x00-\x21\x23-\U0010FFFF"]  # noqa
 
 
 class QuotedField(Rule):
@@ -55,7 +55,7 @@ class QuotedField(Rule):
 # Also disallow raw quotes in unquoted fields (common strict-ish behavior).
 class UnquotedChar(Rule):
     ch: char[
-        "\x00-\x09"         # include tabs and control chars except LF/CR
+        "\x00-\x09"         # include tabs and control chars except LF/CR       # noqa
         "\x0B-\x0C"
         "\x0E-\x21"         # up to '!' (0x21), excludes '"'(0x22)
         "\x23-\x2B"         # '#'..'+'
