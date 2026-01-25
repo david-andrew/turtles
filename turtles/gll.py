@@ -1024,6 +1024,30 @@ class GLLParser:
                 new_accumulated = self._combine_sppf(accumulated_sppf, current_sppf)
                 items_parsed += 1
                 
+                # Guard against infinite loops: ensure position advanced
+                # Get the position before this item was parsed
+                pos_before_item = accumulated_sppf.end if accumulated_sppf else orig_desc.pos
+                
+                # If position didn't advance, stop to avoid infinite loop
+                # This can happen if an element matches zero characters, which would cause
+                # an infinite loop when trying to match more items at the same position
+                if pos <= pos_before_item:
+                    # Position didn't advance after parsing an item - stop to avoid infinite loop
+                    # Only emit result if we have enough items
+                    if items_parsed >= at_least:
+                        if capture_name:
+                            final_sppf = self._get_or_create_sppf(f":{capture_name}",
+                                new_accumulated.start if new_accumulated else pos, pos)
+                            if new_accumulated:
+                                final_sppf.families = new_accumulated.families[:]
+                        else:
+                            final_sppf = new_accumulated
+                        combined = self._combine_sppf(orig_desc.sppf, final_sppf)
+                        next_slot = self._next_slot(orig_desc.slot)
+                        if next_slot:
+                            self._add(Descriptor(next_slot, orig_desc.gss, pos, combined))
+                    return
+                
                 # If we have enough items, we can stop here (emit a valid parse path)
                 if items_parsed >= at_least:
                     if capture_name:
@@ -1076,7 +1100,7 @@ class GLLParser:
                                     new_gss = self._create(cont_slot, orig_desc.gss, pos, None)  # Don't pass SPPF through edge
                                     self._add(Descriptor(first_slot, new_gss, pos, None))
                     else:
-                        # No separator needed
+                        # No separator needed - try to match more items at current position
                         self._parse_repeat_element(
                             rep_element, separator, at_least, at_most,
                             items_parsed, new_accumulated, capture_name, orig_desc, pos
