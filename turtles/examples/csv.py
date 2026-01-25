@@ -1,11 +1,13 @@
 """
 CSV grammar as defined by RFC 4180.
 Supports all CSV features: quoted fields, unquoted fields, empty fields, multiple record separators, etc.
+
+TODO: improve this grammar
 """
 from __future__ import annotations
 
 
-from turtles import Rule, char, repeat, at_least, separator, optional
+from turtles import Rule, char, repeat, at_least, optional
 
 # --- Bytes / misc ---
 class BOM(Rule):
@@ -110,17 +112,29 @@ class DelimThenFieldSkipSpace(Rule):
 
 
 # --- Top-level file ---
-# file := [BOM] record (record_sep record)* [record_sep]
-#
-# Note: allowing an optional trailing RecordSep is convenient and common.
+# Structured so separators are required between records, making the grammar unambiguous.
+# First record has no leading separator; subsequent records require a separator before them.
+# This prevents trailing newlines from creating spurious empty records.
+
+# SepThenRecord: a separator followed by a record (for subsequent records)
+class SepThenRecord(Rule):
+    RecordSep
+    record: Record
+
 class CSV(Rule):
     optional[BOM]
-    records: repeat[Record, separator[RecordSep], at_least[1]]
-    optional[RecordSep]
+    first: Record
+    rest: repeat[SepThenRecord]
+    optional[RecordSep]  # trailing separator
 
 
-# If you prefer skipinitialspace behavior, swap in this top-level instead:
+# Variant that allows spaces/tabs after commas (like skipinitialspace):
+class SepThenRecordSkipSpace(Rule):
+    RecordSep
+    record: RecordSkipInitialSpace
+
 class CSVSkipInitialSpace(Rule):
     optional[BOM]
-    records: repeat[RecordSkipInitialSpace, separator[RecordSep], at_least[1]]
-    optional[RecordSep]
+    first: RecordSkipInitialSpace
+    rest: repeat[SepThenRecordSkipSpace]
+    optional[RecordSep]  # trailing separator
