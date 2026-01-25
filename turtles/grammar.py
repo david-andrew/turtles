@@ -1,6 +1,30 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import Enum, auto
 import ast
+
+
+class CaptureKind(Enum):
+    """Describes how to extract a captured value from the parse tree."""
+    RULE = auto()           # Single rule reference: find node, hydrate
+    RULE_LIST = auto()      # Repeat of rules: find all nodes, hydrate each
+    TEXT = auto()           # Terminal capture: extract text span
+    OPTIONAL_RULE = auto()  # Optional rule: find node or return None
+    OPTIONAL_TEXT = auto()  # Optional terminal: extract text or return None
+    MIXED = auto()          # Mixed choice (rules + terminals): try rules, fall back to text
+
+
+@dataclass
+class CaptureDescriptor:
+    """
+    Describes how to extract a captured value from the parse tree.
+    Computed at grammar build time, used at extraction time.
+    """
+    kind: CaptureKind
+    target_names: frozenset[str]  # Rule names to search for (expanded for unions)
+    is_optional: bool = False     # Whether absent value should be None vs []
+    is_list: bool = False         # Whether result should be a list
+    text_fallback: bool = False   # For mixed choices, fall back to text if no rules found
 
 
 @dataclass(frozen=True)
@@ -42,6 +66,7 @@ class GrammarRef:
 class GrammarCapture:
     name: str  # field name
     rule: GrammarElement  # what to match
+    descriptor: CaptureDescriptor | None = None  # Computed at build time
 
     def __str__(self) -> str:
         return f'{self.name}:{self.rule}'
@@ -430,11 +455,252 @@ def _parse_repeat(args: list[ast.expr], source_file: str, source_line: int) -> G
     return GrammarRepeat(element, at_least, at_most, separator)
 
 
+# --- Capture Descriptor Computation ---
+
+def _is_simple_element(elem: GrammarElement) -> bool:
+    """Check if an element is simple (char class or literal) - captures as text."""
+    if isinstance(elem, (GrammarCharClass, GrammarLiteral)):
+        return True
+    if isinstance(elem, GrammarChoice):
+        return all(_is_simple_element(a) for a in elem.alternatives)
+    if isinstance(elem, GrammarSequence):
+        return all(_is_simple_element(e) for e in elem.elements)
+    return False
+
+
+def _unwrap_optional(elem: GrammarElement) -> tuple[GrammarElement, bool]:
+    """
+    Unwrap optional pattern: GrammarChoice([inner, GrammarLiteral("")]).
+    Returns (unwrapped_element, is_optional).
+    """
+    if isinstance(elem, GrammarChoice):
+        non_empty = [a for a in elem.alternatives 
+                     if not (isinstance(a, GrammarLiteral) and a.value == "")]
+        if len(non_empty) == 1 and len(elem.alternatives) > 1:
+            return non_empty[0], True
+    return elem, False
+
+
+def _get_ref_name(elem: GrammarElement) -> str | None:
+    """Get the reference name from an element if it's a GrammarRef."""
+    if isinstance(elem, GrammarRef):
+        return elem.name
+    return None
+
+
+def _collect_rule_refs(elem: GrammarElement) -> set[str]:
+    """Collect all rule reference names from an element (recursively)."""
+    refs: set[str] = set()
+    if isinstance(elem, GrammarRef):
+        refs.add(elem.name)
+    elif isinstance(elem, GrammarChoice):
+        for alt in elem.alternatives:
+            refs.update(_collect_rule_refs(alt))
+    elif isinstance(elem, GrammarSequence):
+        for e in elem.elements:
+            refs.update(_collect_rule_refs(e))
+    elif isinstance(elem, GrammarRepeat):
+        refs.update(_collect_rule_refs(elem.element))
+    elif isinstance(elem, GrammarCapture):
+        refs.update(_collect_rule_refs(elem.rule))
+    return refs
+
+
+def _has_non_empty_terminals(elem: GrammarElement) -> bool:
+    """Check if element contains non-empty terminals (char classes or non-empty literals)."""
+    if isinstance(elem, GrammarCharClass):
+        return True
+    if isinstance(elem, GrammarLiteral):
+        return elem.value != ""
+    if isinstance(elem, GrammarChoice):
+        return any(_has_non_empty_terminals(a) for a in elem.alternatives)
+    if isinstance(elem, GrammarSequence):
+        return any(_has_non_empty_terminals(e) for e in elem.elements)
+    return False
+
+
+def _compute_repeat_descriptor(
+    repeat_elem: GrammarElement,
+    is_outer_optional: bool,
+    rule_unions: dict[str, list[str]] | None = None
+) -> CaptureDescriptor:
+    """Compute descriptor for a repeat element."""
+    rule_unions = rule_unions or {}
+    
+    ref_name = _get_ref_name(repeat_elem)
+    if ref_name:
+        # repeat[Rule] -> RULE_LIST
+        target_names = {ref_name}
+        if ref_name in rule_unions:
+            target_names.update(rule_unions[ref_name])
+        return CaptureDescriptor(
+            kind=CaptureKind.RULE_LIST,
+            target_names=frozenset(target_names),
+            is_optional=is_outer_optional,
+            is_list=True,
+            text_fallback=False
+        )
+    
+    if isinstance(repeat_elem, GrammarChoice):
+        # repeat[optional[Rule]] or repeat[char | Rule]
+        rule_refs = _collect_rule_refs(repeat_elem)
+        has_terminals = _has_non_empty_terminals(repeat_elem)
+        
+        # Expand union names
+        expanded_names: set[str] = set()
+        for name in rule_refs:
+            expanded_names.add(name)
+            if name in rule_unions:
+                expanded_names.update(rule_unions[name])
+        
+        if has_terminals and rule_refs:
+            # Mixed: repeat[char | Escape] -> prefer text capture
+            return CaptureDescriptor(
+                kind=CaptureKind.TEXT,
+                target_names=frozenset(expanded_names),
+                is_optional=is_outer_optional,
+                is_list=True,
+                text_fallback=True
+            )
+        elif rule_refs:
+            # Pure rule choice: repeat[optional[Field]] -> RULE_LIST
+            return CaptureDescriptor(
+                kind=CaptureKind.RULE_LIST,
+                target_names=frozenset(expanded_names),
+                is_optional=is_outer_optional,
+                is_list=True,
+                text_fallback=False
+            )
+    
+    # repeat[char[...]] or other terminals -> TEXT
+    return CaptureDescriptor(
+        kind=CaptureKind.TEXT,
+        target_names=frozenset(),
+        is_optional=is_outer_optional,
+        is_list=True,
+        text_fallback=False
+    )
+
+
+def _compute_choice_descriptor(
+    choice: GrammarChoice,
+    is_optional: bool,
+    rule_unions: dict[str, list[str]] | None = None
+) -> CaptureDescriptor:
+    """Compute descriptor for a choice element (not wrapped in repeat)."""
+    rule_unions = rule_unions or {}
+    
+    rule_refs = _collect_rule_refs(choice)
+    has_terminals = _has_non_empty_terminals(choice)
+    
+    # Expand union names
+    expanded_names: set[str] = set()
+    for name in rule_refs:
+        expanded_names.add(name)
+        if name in rule_unions:
+            expanded_names.update(rule_unions[name])
+    
+    if rule_refs and has_terminals:
+        # Mixed choice: either[Rule, "literal"] -> MIXED
+        return CaptureDescriptor(
+            kind=CaptureKind.MIXED,
+            target_names=frozenset(expanded_names),
+            is_optional=is_optional,
+            is_list=False,
+            text_fallback=True
+        )
+    elif rule_refs:
+        # Pure rule choice: either[A, B, C]
+        kind = CaptureKind.OPTIONAL_RULE if is_optional else CaptureKind.RULE
+        return CaptureDescriptor(
+            kind=kind,
+            target_names=frozenset(expanded_names),
+            is_optional=is_optional,
+            is_list=False,
+            text_fallback=False
+        )
+    
+    # Pure terminal choice
+    kind = CaptureKind.OPTIONAL_TEXT if is_optional else CaptureKind.TEXT
+    return CaptureDescriptor(
+        kind=kind,
+        target_names=frozenset(),
+        is_optional=is_optional,
+        is_list=False,
+        text_fallback=False
+    )
+
+
+def compute_capture_descriptor(
+    inner: GrammarElement,
+    rule_unions: dict[str, list[str]] | None = None
+) -> CaptureDescriptor:
+    """
+    Analyze a capture's inner element and return extraction descriptor.
+    
+    Args:
+        inner: The grammar element being captured
+        rule_unions: Dict mapping union names to their alternative names
+    
+    Returns:
+        CaptureDescriptor describing how to extract this capture
+    """
+    rule_unions = rule_unions or {}
+    
+    # Unwrap optional pattern
+    inner_unwrapped, is_optional = _unwrap_optional(inner)
+    
+    # Simple rule reference
+    ref_name = _get_ref_name(inner_unwrapped)
+    if ref_name:
+        target_names = {ref_name}
+        if ref_name in rule_unions:
+            target_names.update(rule_unions[ref_name])
+        kind = CaptureKind.OPTIONAL_RULE if is_optional else CaptureKind.RULE
+        return CaptureDescriptor(
+            kind=kind,
+            target_names=frozenset(target_names),
+            is_optional=is_optional,
+            is_list=False,
+            text_fallback=False
+        )
+    
+    # Repeat
+    if isinstance(inner_unwrapped, GrammarRepeat):
+        return _compute_repeat_descriptor(inner_unwrapped.element, is_optional, rule_unions)
+    
+    # Choice (not wrapped in repeat)
+    if isinstance(inner_unwrapped, GrammarChoice):
+        return _compute_choice_descriptor(inner_unwrapped, is_optional, rule_unions)
+    
+    # Terminal (char class, literal, sequence of terminals)
+    if _is_simple_element(inner_unwrapped):
+        kind = CaptureKind.OPTIONAL_TEXT if is_optional else CaptureKind.TEXT
+        return CaptureDescriptor(
+            kind=kind,
+            target_names=frozenset(),
+            is_optional=is_optional,
+            is_list=False,
+            text_fallback=False
+        )
+    
+    # Sequence or unknown - treat as text
+    kind = CaptureKind.OPTIONAL_TEXT if is_optional else CaptureKind.TEXT
+    return CaptureDescriptor(
+        kind=kind,
+        target_names=frozenset(),
+        is_optional=is_optional,
+        is_list=False,
+        text_fallback=False
+    )
+
+
 def _build_grammar(
     name: str,
     sequence: list[tuple],
     source_file: str,
     source_line: int,
+    rule_unions: dict[str, list[str]] | None = None,
 ) -> GrammarRule:
     """
     Build a GrammarRule from the collected sequence of expressions and declarations.
@@ -442,6 +708,9 @@ def _build_grammar(
     sequence is a list of tuples like:
         ("expr", "literal string")
         ("decl", "field_name", "annotation_text")
+    
+    rule_unions: Optional dict mapping union names to their alternative names,
+                 used for computing capture descriptors.
     """
     elements: list[GrammarElement] = []
     
@@ -460,7 +729,9 @@ def _build_grammar(
                 inner = GrammarRef("<unknown>", source_file, source_line)
             
             if field_name:
-                elements.append(GrammarCapture(field_name, inner))
+                # Compute capture descriptor
+                descriptor = compute_capture_descriptor(inner, rule_unions)
+                elements.append(GrammarCapture(field_name, inner, descriptor))
             else:
                 elements.append(inner)
     
