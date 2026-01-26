@@ -1547,11 +1547,21 @@ def tree_string(node: Rule) -> str:
                 fields.append((key, value))
         return fields
     
+    def get_class_display_name(rule: Rule) -> str:
+        """Get class name with mixin type annotation if present."""
+        actual_cls = rule._get_actual_class()
+        class_name = actual_cls.__name__
+        # Check for mixin base (int, float, str, bool)
+        for base in actual_cls.__mro__:
+            if base in (int, float, str, bool):
+                return f"{class_name}({base.__name__})"
+        return class_name
+    
     def render_value(value: object, prefix: str, connector: str, label: str | None) -> None:
         """Render a single value."""
         if isinstance(value, Rule):
-            # It's a Rule instance - show class name and recurse
-            class_name = value.__class__.__name__
+            # It's a Rule instance - show actual class name with mixin if present
+            class_name = get_class_display_name(value)
             if label:
                 lines.append(f"{prefix}{connector}{label}: {class_name}")
             else:
@@ -1586,8 +1596,8 @@ def tree_string(node: Rule) -> str:
             else:
                 lines.append(f"{prefix}{connector}{value}")
     
-    # Start with the root node
-    class_name = node.__class__.__name__
+    # Start with the root node (use actual class name with mixin if present)
+    class_name = get_class_display_name(node)
     lines.append(class_name)
     
     fields = get_fields(node)
