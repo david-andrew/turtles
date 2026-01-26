@@ -23,7 +23,7 @@ assert result.value == "42"
 from __future__ import annotations
 
 from pathlib import Path
-from typing import final, Union, overload, TYPE_CHECKING
+from typing import final, overload, TYPE_CHECKING, Union
 from abc import ABC, ABCMeta
 import inspect
 import ast
@@ -173,7 +173,7 @@ def _get_all_captured_vars() -> dict[str, object]:
     return result
 
 
-class RuleUnion[T]:
+class RuleUnion[*Ts]:
     """
     Represents a union of Rule classes (A | B | C).
     Can be registered as a named rule.
@@ -227,11 +227,11 @@ class RuleUnion[T]:
             del frame
     
     @overload
-    def __or__[U: Rule](self, other: type[U]) -> 'RuleUnion[T | U]': ...
+    def __or__[U: Rule](self, other: type[U]) -> 'RuleUnion[*Ts, U]': ...
     @overload
-    def __or__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[T | U]': ...
+    def __or__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[*Ts, U]': ...
     @overload
-    def __or__(self, other: type[None]) -> 'RuleUnion[T | None]': ...
+    def __or__(self, other: type[None]) -> 'RuleUnion[*Ts, None]': ...
     def __or__(self, other):
         _check_not_in_repl("create Rule union with '|' operator")
         # Merge source files from both operands
@@ -250,9 +250,9 @@ class RuleUnion[T]:
                         _source_files=new_files, _source_line=self._source_line)
     
     @overload
-    def __ror__[U: Rule](self, other: type[U]) -> 'RuleUnion[U | T]': ...
+    def __ror__[U: Rule](self, other: type[U]) -> 'RuleUnion[*Ts, U]': ...
     @overload
-    def __ror__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[U | T]': ...
+    def __ror__[U](self, other: 'RuleUnion[U]') -> 'RuleUnion[*Ts, U]': ...
     def __ror__(self, other):
         _check_not_in_repl("create Rule union with '|' operator")
         # Merge source files from both operands
@@ -317,7 +317,7 @@ class RuleUnion[T]:
         alt_names = [a.__name__ if a is not None else 'None' for a in self.alternatives]
         return f"RuleUnion([{', '.join(alt_names)}])"
     
-    def __call__(self, raw: str) -> T:
+    def __call__(self, raw: str) -> Union[*Ts]:
         """Parse input string using this union as the start rule."""
         from .gll import (
             CompiledGrammar, GLLParser, DisambiguationRules, ParseError
@@ -1478,7 +1478,6 @@ class either[*Ts](Rule):
     Represents a choice between alternatives.
     Usage: either[A, B, C] or either[A | B | C]
     """
-    item: Union[*Ts]  # Type is determined by the alternatives
     
     def __class_getitem__(cls, items):
         # When either[A, B, C] is used, return a RuleUnion
@@ -1499,16 +1498,14 @@ class either[*Ts](Rule):
         
         # Fallback: return a generic alias for type checking purposes
         return super().__class_getitem__(items)
-class repeat[T:Rule, *Rules](Rule):
-    items: list[T]
-class optional[T:Rule](Rule):
-    item: T|None
-class sequence[*Ts](Rule):
-    items: tuple[*Ts]
 
-# TBD how this will work
-class _ambiguous[T:Rule](Rule):
-    alternatives: list[T]
+class repeat[T:Rule, *Rules](Rule): ...
+class optional[T:Rule](Rule): ...
+class sequence[*Ts](Rule): ...
+
+# # TBD how this will work
+# class _ambiguous[T:Rule](Rule):
+#     alternatives: list[T]
 
 
 def tree_string(node: Rule) -> str:
