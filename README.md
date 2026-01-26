@@ -70,18 +70,18 @@ print(repr(row))
 # └── items: [3 items]
 #     ├── [0]: KV
 #     │   ├── key: temp
-#     │   └── value: Float
-#     │       ├── whole: Int
+#     │   └── value: Float(float)
+#     │       ├── whole: Int(int)
 #     │       │   └── value: 21
-#     │       └── frac: Int
+#     │       └── frac: Int(int)
 #     │           └── value: 5
 #     ├── [1]: KV
 #     │   ├── key: humidity
-#     │   └── value: Int
+#     │   └── value: Int(int)
 #     │       └── value: 45
 #     └── [2]: KV
 #         ├── key: retries
-#         └── value: Int
+#         └── value: Int(int)
 #             └── value: 0
 ```
 
@@ -328,11 +328,11 @@ result.as_dict()
 | Construct | Description | Example |  BNF Equivalent |
 |-----------|-----|-------------|---------|
 | `"literal"` | Match exact string | `"hello"` | `"hello"` | 
-| `char['a-z']` | Character class | `char['0-9A-Fa-f']` | `[0-9A-FA-F]` |
+| `char['a-z']` | Character class | `char['0-9A-Fa-f']` | `[0-9A-Fa-f]` |
 | `repeat[X]` | Zero or more | `repeat[char['0-9']]` | `[0-9]*` |
 | `repeat[X, at_least[n]]` | At least n | `repeat[char['a-z'], at_least[1]]` |  `[a-z]+` / `[a-z]{1,}` |
 | `repeat[X, at_most[n]]` | At most n | `repeat[Int, at_most[10]]` |  `Int{0,10}` |
-| `repeat[X, exactly[n]]` | Exactl n | `repeat[Int, exactly[3]]` |  `Int{3,3}` |
+| `repeat[X, exactly[n]]` | Exactly n | `repeat[Int, exactly[3]]` |  `Int{3,3}` |
 | `repeat[X, separator[Y]]` | Separated list | `repeat[Item, separator[',']]` |  `Item (',' Item)*` |
 | `optional[X]` | Zero or one | `optional[Sign]` |  `Sign?` |
 | `X \| None` | Optional rule | `prefix: Sign \| None` |  `Sign?` |
