@@ -24,49 +24,47 @@ pip install turtles
 Define a grammar (in a `.py` file), parse input, and use the structured result.
 
 ```python
-from turtles import Rule, char, repeat, at_least, optional, separator
+from turtles import Rule, char, repeat, at_least, separator
 
-
-class Int(Rule):
+# define rules for our grammar
+class Int(Rule, int):
     value: repeat[char["0-9"], at_least[1]]
 
-
-class Float(Rule):
+class Float(Rule, float):
     whole: Int
     "."
     frac: Int
 
-
 Number = Float | Int
-
 
 class KV(Rule):
     key: repeat[char["a-zA-Z_"], at_least[1]]
     "="
     value: Number
 
-
 class Row(Rule):
     items: repeat[KV, separator[" "], at_least[1]]
 
 
-row = Row("temp=21.5 humidity=45 retries=0")
+# parse some input with the grammar
+src = "temp=21.5 humidity=45 retries=0"
+row = Row(src)
 
 # Work with hydrated objects
 assert row.items[0].key == "temp"
-assert row.items[0].value.as_dict() == {"whole": {"value": "21"}, "frac": {"value": "5"}}
+assert row.items[0].value == 21.5
 
 # Convert the whole parse result to plain Python containers
 data = row.as_dict()
 assert data == {
     "items": [
-        {"key": "temp", "value": {"whole": {"value": "21"}, "frac": {"value": "5"}}},
-        {"key": "humidity", "value": {"value": "45"}},
-        {"key": "retries", "value": {"value": "0"}},
+        {"key": "temp", "value": 21.5},
+        {"key": "humidity", "value": 45},
+        {"key": "retries", "value": 0},
     ]
 }
 
-# Helpful while iterating on a grammar
+# # Helpful while iterating on a grammar
 print(repr(row))
 # Row
 # └── items: [3 items]
