@@ -1,9 +1,56 @@
 """
 IPv4 and IPv6 address grammars
 
-TODO: test this
-"""
+TODO: current grammar extraction doesn't support some of the constructs here
+hex = char['0-9A-Fa-f']
+LS32 = either[
+    sequence[H16, r':', H16],
+    IPv4,
+]
+etc.
 
+TODO: write __convert__ functions to convert into a dataclass
+TODO: dataclasses should also have good __str__ implementations
+
+
+TODO Test cases:
+[IPv6]
+2001:0db8:0000:0000:0000:0000:0000:0001
+2001:db8:0:0:0:0:0:1
+ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+0000:0000:0000:0000:0000:0000:0000:0000
+2001:db8::1
+2001:db8:0:0::1
+2001:db8::
+::1
+::
+2001:Db8::aBcd
+FE80::0202:B3FF:FE1E:8329
+::ffff:192.0.2.128
+0:0:0:0:0:ffff:192.0.2.128
+2001:db8::192.0.2.33
+::192.0.2.33
+0:0:0:0:0:0:0:1
+2001:0db8::0001
+2001:db8:0000:0000:0000:0000:0000:0001
+::ffff:0:192.0.2.128
+--- (invalid cases) ---
+2001:db8:::1
+2001:db8::1::2
+1:2:3:4:5:6:7:8:9
+1:2:3:4:5:6:7
+2001:db8::zzzz
+2001:db8::12345
+2001:db8::g
+2001-db8::1
+2001:db8: :1
+:2001:db8::1
+2001:db8::1:
+::ffff:999.0.2.128
+::ffff:192.0.2
+::ffff:192.0.2.128.1
+"""
+from __future__ import annotations
 from turtles import Rule, char, repeat, at_least, at_most, separator, optional, exactly, sequence, either
 
 
@@ -28,6 +75,7 @@ class IPv4(Rule):
     octet4: Octet
 
 
+hex = char['0-9A-Fa-f']
 H16 = repeat[hex, at_least[1], at_most[4]]
 LS32 = either[
     sequence[H16, r':', H16],
